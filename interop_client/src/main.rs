@@ -105,6 +105,7 @@ fn to_ciphersuite(cs: u32) -> Result<&'static Ciphersuite, Status> {
         Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519,
         Ciphersuite::MLS_128_DHKEMP256_AES128GCM_SHA256_P256,
         Ciphersuite::MLS_128_DHKEMX25519_CHACHA20POLY1305_SHA256_Ed25519,
+        Ciphersuite::MLS_256_DHKEMP384_AES256GCM_SHA384_P384,
     ];
     match ciphersuites.iter().find(|&&cs| cs == cs_name) {
         Some(ciphersuite) => Ok(ciphersuite),
@@ -192,6 +193,7 @@ impl MlsClient for MlsClientImpl {
             Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519,
             Ciphersuite::MLS_128_DHKEMP256_AES128GCM_SHA256_P256,
             Ciphersuite::MLS_128_DHKEMX25519_CHACHA20POLY1305_SHA256_Ed25519,
+            Ciphersuite::MLS_256_DHKEMP384_AES256GCM_SHA384_P384,
         ];
         let response = SupportedCiphersuitesResponse {
             ciphersuites: ciphersuites
@@ -289,6 +291,7 @@ impl MlsClient for MlsClientImpl {
                     Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519,
                     Ciphersuite::MLS_128_DHKEMP256_AES128GCM_SHA256_P256,
                     Ciphersuite::MLS_128_DHKEMX25519_CHACHA20POLY1305_SHA256_Ed25519,
+                    Ciphersuite::MLS_256_DHKEMP384_AES256GCM_SHA384_P384,
                 ]),
                 Some(&EXTENSION_TYPES),
                 None,
