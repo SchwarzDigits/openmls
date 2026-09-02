@@ -25,3 +25,8 @@ targeted-messages-draft = []
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
 tls_codec = { workspace = true }
+
+[dev-dependencies]
+serde_json = "1"
+postcard = { version = "1", features = ["alloc"] }
+ciborium = "0.2"
