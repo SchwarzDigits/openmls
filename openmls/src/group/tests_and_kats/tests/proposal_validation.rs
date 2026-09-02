@@ -1143,12 +1143,13 @@ fn test_valsem105() {
             .unwrap();
 
         // Let's just pick a ciphersuite that's not the one we're testing right now.
-        let wrong_ciphersuite = match ciphersuite {
-            Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519 => {
+        let wrong_ciphersuite = u16::from(
+            if ciphersuite == Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519 {
                 Ciphersuite::MLS_128_DHKEMP256_AES128GCM_SHA256_P256
-            }
-            _ => Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519,
-        } as u16;
+            } else {
+                Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519
+            },
+        );
         match key_package_version {
             KeyPackageTestVersion::WrongCiphersuite => {
                 franken_key_package.ciphersuite = wrong_ciphersuite;
@@ -1180,12 +1181,13 @@ fn test_valsem105() {
             let mut franken_key_package = FrankenKeyPackage::from(charlie_key_package.clone());
 
             // Let's just pick a ciphersuite that's not the one we're testing right now.
-            let wrong_ciphersuite = match ciphersuite {
-                Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519 => {
+            let wrong_ciphersuite = u16::from(
+                if ciphersuite == Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519 {
                     Ciphersuite::MLS_128_DHKEMP256_AES128GCM_SHA256_P256
-                }
-                _ => Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519,
-            } as u16;
+                } else {
+                    Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519
+                },
+            );
             match key_package_version {
                 KeyPackageTestVersion::WrongCiphersuite => {
                     franken_key_package.ciphersuite = wrong_ciphersuite;
