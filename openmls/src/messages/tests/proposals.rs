@@ -73,3 +73,47 @@ fn add_proposal_checks_ciphersuite_before_signature() {
         .unwrap_err();
     assert_eq!(err, ValidationError::InvalidAddProposalCiphersuite);
 }
+
+/// A ReInit proposal is resolved with the crypto provider when it is
+/// validated: a GREASE value, an unknown code point and a built-in
+/// ciphersuite the provider does not support are all rejected.
+#[test]
+fn reinit_proposal_resolves_its_ciphersuite() {
+    use openmls_traits::{types::VerifiableCiphersuite, OpenMlsProvider};
+
+    use crate::{
+        group::{errors::ValidationError, GroupId},
+        messages::proposals_in::ReInitProposalIn,
+        test_utils::restricted_provider::RestrictedProvider,
+    };
+
+    let ciphersuite = Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519;
+
+    let reinit = |wire: VerifiableCiphersuite| ReInitProposalIn {
+        group_id: GroupId::from_slice(b"reinit"),
+        version: ProtocolVersion::default(),
+        ciphersuite: wire,
+        extensions: Extensions::empty(),
+    };
+
+    let provider = RestrictedProvider::new(vec![ciphersuite]);
+    assert_eq!(
+        reinit(ciphersuite.into())
+            .validate(provider.crypto())
+            .unwrap()
+            .ciphersuite,
+        ciphersuite
+    );
+    for wire in [
+        VerifiableCiphersuite::new(0x0A0A),
+        VerifiableCiphersuite::new(0xF0F0),
+        VerifiableCiphersuite::new(u16::from(
+            Ciphersuite::MLS_256_DHKEMP521_AES256GCM_SHA512_P521,
+        )),
+    ] {
+        assert!(matches!(
+            reinit(wire).validate(provider.crypto()),
+            Err(ValidationError::InvalidReInitCiphersuite)
+        ));
+    }
+}
