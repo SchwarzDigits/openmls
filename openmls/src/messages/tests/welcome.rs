@@ -36,12 +36,12 @@ fn test_welcome_context_mismatch() {
 
     // We need a ciphersuite that is different from the current one to create
     // the mismatch
-    let mismatched_ciphersuite = match ciphersuite {
-        Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519 => {
+    let mismatched_ciphersuite =
+        if ciphersuite == Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519 {
             Ciphersuite::MLS_128_DHKEMX25519_CHACHA20POLY1305_SHA256_Ed25519
-        }
-        _ => Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519,
-    };
+        } else {
+            Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519
+        };
 
     let group_id = GroupId::random(alice_provider.rand());
     let mls_group_create_config = MlsGroupCreateConfig::builder()
