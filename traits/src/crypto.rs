@@ -29,6 +29,25 @@ pub trait OpenMlsCrypto: Send + Sync {
     /// Returns the list of supported [`Ciphersuite`]s.
     fn supported_ciphersuites(&self) -> Vec<Ciphersuite>;
 
+    /// Turns a code point into a [`Ciphersuite`] this provider can execute.
+    ///
+    /// The default is [`builtin_ciphersuite`](Self::builtin_ciphersuite). A
+    /// provider that defines its own ciphersuites with [`Ciphersuite::custom`]
+    /// overrides this, returns them for their code points and calls
+    /// `builtin_ciphersuite` for everything else.
+    fn ciphersuite(&self, id: u16) -> Result<Ciphersuite, CryptoError> {
+        self.builtin_ciphersuite(id)
+    }
+
+    /// The built-in [`Ciphersuite`] with this code point, if
+    /// [`supports`](Self::supports) accepts it.
+    fn builtin_ciphersuite(&self, id: u16) -> Result<Ciphersuite, CryptoError> {
+        let ciphersuite =
+            Ciphersuite::try_from(id).map_err(|_| CryptoError::UnsupportedCiphersuite)?;
+        self.supports(ciphersuite)?;
+        Ok(ciphersuite)
+    }
+
     /// HKDF extract.
     ///
     /// Returns an error if the [`HashType`] is not supported.
