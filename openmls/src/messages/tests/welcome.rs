@@ -281,7 +281,7 @@ fn test_welcome_message() {
         .expect("An unexpected error occurred.");
 
     // Check that the welcome message is the same
-    assert_eq!(msg_decoded.cipher_suite, ciphersuite);
+    assert_eq!(msg_decoded.cipher_suite, ciphersuite.into());
     for secret in msg_decoded.secrets.iter() {
         assert_eq!(new_member.as_slice(), secret.new_member.as_slice());
         let ptxt = hpke::decrypt_with_label(

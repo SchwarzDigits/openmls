@@ -8,7 +8,10 @@ use crate::{
     treesync::node::leaf_node::{LeafNodeIn, VerifiableLeafNode},
     versions::ProtocolVersion,
 };
-use openmls_traits::{crypto::OpenMlsCrypto, types::Ciphersuite};
+use openmls_traits::{
+    crypto::OpenMlsCrypto,
+    types::{Ciphersuite, CiphersuiteResolveError, VerifiableCiphersuite},
+};
 use serde::{Deserialize, Serialize};
 use tls_codec::{
     Serialize as TlsSerializeTrait, TlsDeserialize, TlsDeserializeBytes, TlsSerialize, TlsSize,
@@ -89,7 +92,7 @@ impl VerifiedStruct for KeyPackage {}
 )]
 struct KeyPackageTbsIn {
     protocol_version: ProtocolVersion,
-    ciphersuite: Ciphersuite,
+    ciphersuite: VerifiableCiphersuite,
     init_key: InitKey,
     leaf_node: LeafNodeIn,
     extensions: Extensions<AnyObject>,
@@ -124,7 +127,7 @@ impl KeyPackageIn {
     }
 
     /// Returns the ciphersuite this key package claims, before validation.
-    pub(crate) fn unverified_ciphersuite(&self) -> Ciphersuite {
+    pub(crate) fn unverified_ciphersuite(&self) -> VerifiableCiphersuite {
         self.payload.ciphersuite
     }
 
@@ -144,17 +147,25 @@ impl KeyPackageIn {
         crypto: &impl OpenMlsCrypto,
         protocol_version: ProtocolVersion,
     ) -> Result<KeyPackage, KeyPackageVerifyError> {
-        let ciphersuite = self.payload.ciphersuite;
-        crypto
-            .supports(ciphersuite)
-            .map_err(|_| KeyPackageVerifyError::UnsupportedCiphersuite(ciphersuite))?;
+        let ciphersuite = self
+            .payload
+            .ciphersuite
+            .resolve(crypto)
+            .map_err(|e| match e {
+                CiphersuiteResolveError::Unsupported(ciphersuite) => {
+                    KeyPackageVerifyError::UnsupportedCiphersuite(ciphersuite)
+                }
+                CiphersuiteResolveError::Grease | CiphersuiteResolveError::Unknown => {
+                    KeyPackageVerifyError::UnknownCiphersuite(self.payload.ciphersuite)
+                }
+            })?;
 
         // We first need to verify the LeafNode inside the KeyPackage
         let leaf_node = self.payload.leaf_node.clone().into_verifiable_leaf_node();
 
         let signature_key = &OpenMlsSignaturePublicKey::from_signature_key(
             self.payload.leaf_node.signature_key().clone(),
-            self.payload.ciphersuite.signature_algorithm(),
+            ciphersuite.signature_algorithm(),
         );
 
         // https://validation.openmls.tech/#valn0108
@@ -179,7 +190,7 @@ impl KeyPackageIn {
 
         let key_package_tbs = KeyPackageTbs {
             protocol_version: self.payload.protocol_version,
-            ciphersuite: self.payload.ciphersuite,
+            ciphersuite,
             init_key: self.payload.init_key,
             leaf_node,
             extensions: self.payload.extensions.try_into()?,
@@ -224,21 +235,38 @@ impl KeyPackageIn {
     ///
     /// # Safety
     ///
-    /// The caller must guarantee that the key package is verified.
+    /// The caller must guarantee that the key package is verified. The
+    /// ciphersuite is still resolved with the crypto provider, since nothing
+    /// else can turn the code point into a [`Ciphersuite`].
     #[cfg(feature = "unchecked-conversions")]
-    pub fn into_unchecked(self) -> KeyPackage {
+    pub fn into_unchecked(
+        self,
+        crypto: &impl OpenMlsCrypto,
+    ) -> Result<KeyPackage, KeyPackageVerifyError> {
+        let ciphersuite = self
+            .payload
+            .ciphersuite
+            .resolve(crypto)
+            .map_err(|e| match e {
+                CiphersuiteResolveError::Unsupported(ciphersuite) => {
+                    KeyPackageVerifyError::UnsupportedCiphersuite(ciphersuite)
+                }
+                CiphersuiteResolveError::Grease | CiphersuiteResolveError::Unknown => {
+                    KeyPackageVerifyError::UnknownCiphersuite(self.payload.ciphersuite)
+                }
+            })?;
         let payload = KeyPackageTbs {
             protocol_version: self.payload.protocol_version,
-            ciphersuite: self.payload.ciphersuite,
+            ciphersuite,
             init_key: self.payload.init_key,
             leaf_node: self.payload.leaf_node.into_unchecked(),
             extensions: self.payload.extensions.into_unchecked(),
         };
-        KeyPackage {
+        Ok(KeyPackage {
             payload,
             signature: self.signature,
             serialized_payload: None,
-        }
+        })
     }
 }
 
@@ -247,7 +275,8 @@ impl From<KeyPackageTbsIn> for KeyPackageTbs {
     fn from(value: KeyPackageTbsIn) -> Self {
         KeyPackageTbs {
             protocol_version: value.protocol_version,
-            ciphersuite: value.ciphersuite,
+            ciphersuite: Ciphersuite::try_from(value.ciphersuite.value())
+                .expect("test-only conversion of a key package with a built-in ciphersuite"),
             init_key: value.init_key,
             leaf_node: value.leaf_node.into(),
             extensions: value.extensions.coerce(),
@@ -259,7 +288,7 @@ impl From<KeyPackageTbs> for KeyPackageTbsIn {
     fn from(value: KeyPackageTbs) -> Self {
         Self {
             protocol_version: value.protocol_version,
-            ciphersuite: value.ciphersuite,
+            ciphersuite: value.ciphersuite.into(),
             init_key: value.init_key,
             leaf_node: value.leaf_node.into(),
             extensions: value.extensions.into(),

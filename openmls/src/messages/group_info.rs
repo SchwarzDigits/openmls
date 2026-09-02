@@ -1,7 +1,7 @@
 //! This module contains all types related to group info handling.
 
 use openmls_traits::crypto::OpenMlsCrypto;
-use openmls_traits::types::Ciphersuite;
+use openmls_traits::types::{Ciphersuite, CiphersuiteResolveError, VerifiableCiphersuite};
 use serde::{Deserialize as SerdeDeserialize, Serialize as SerdeSerialize};
 use thiserror::Error;
 use tls_codec::{
@@ -16,7 +16,7 @@ use crate::{
         AeadKey, AeadNonce, Signature,
     },
     extensions::{errors::InvalidExtensionError, Extension, Extensions},
-    group::{GroupContext, GroupEpoch, GroupId},
+    group::{GroupContext, GroupContextIn, GroupEpoch, GroupId},
     messages::ConfirmationTag,
     prelude::ExtensionTypeNotValidInGroupInfoError,
 };
@@ -32,6 +32,116 @@ const SIGNATURE_GROUP_INFO_LABEL: &str = "GroupInfoTBS";
 pub struct VerifiableGroupInfo {
     payload: GroupInfoTBS,
     signature: Signature,
+}
+
+/// A [`VerifiableGroupInfo`] as it arrives from the wire, before the crypto
+/// provider has resolved its ciphersuite.
+#[derive(Debug, PartialEq, Clone, TlsDeserialize, TlsDeserializeBytes, TlsSerialize, TlsSize)]
+pub struct VerifiableGroupInfoIn {
+    payload: GroupInfoTbsIn,
+    signature: Signature,
+}
+
+#[derive(Debug, PartialEq, Clone, TlsDeserialize, TlsDeserializeBytes, TlsSerialize, TlsSize)]
+pub(crate) struct GroupInfoTbsIn {
+    group_context: GroupContextIn,
+    extensions: Extensions<GroupInfo>,
+    confirmation_tag: ConfirmationTag,
+    signer: LeafNodeIndex,
+}
+
+impl VerifiableGroupInfoIn {
+    pub(crate) fn try_from_ciphertext(
+        skey: &AeadKey,
+        nonce: &AeadNonce,
+        ciphertext: &[u8],
+        context: &[u8],
+        crypto: &impl OpenMlsCrypto,
+    ) -> Result<Self, GroupInfoError> {
+        let verifiable_group_info_plaintext = skey
+            .aead_open(crypto, ciphertext, context, nonce)
+            .map_err(|_| GroupInfoError::DecryptionFailed)?;
+
+        let mut verifiable_group_info_plaintext_slice = verifiable_group_info_plaintext.as_slice();
+
+        let verifiable_group_info =
+            VerifiableGroupInfoIn::tls_deserialize(&mut verifiable_group_info_plaintext_slice)
+                .map_err(|_| GroupInfoError::Malformed)?;
+
+        if !verifiable_group_info_plaintext_slice.is_empty() {
+            return Err(GroupInfoError::Malformed);
+        }
+
+        Ok(verifiable_group_info)
+    }
+
+    /// The ciphersuite as it appears on the wire.
+    pub fn ciphersuite(&self) -> VerifiableCiphersuite {
+        self.payload.group_context.ciphersuite()
+    }
+
+    /// The group id.
+    pub fn group_id(&self) -> &GroupId {
+        self.payload.group_context.group_id()
+    }
+
+    /// The epoch.
+    pub fn epoch(&self) -> GroupEpoch {
+        self.payload.group_context.epoch()
+    }
+
+    /// The group info extensions.
+    pub fn extensions(&self) -> &Extensions<GroupInfo> {
+        &self.payload.extensions
+    }
+
+    /// Resolves the ciphersuite with the crypto provider.
+    pub fn resolve(
+        self,
+        crypto: &impl OpenMlsCrypto,
+    ) -> Result<VerifiableGroupInfo, CiphersuiteResolveError> {
+        let ciphersuite = self.ciphersuite().resolve(crypto)?;
+        Ok(self.with_ciphersuite(ciphersuite))
+    }
+
+    /// Turns this into a [`VerifiableGroupInfo`] with a ciphersuite that is
+    /// already known, for instance from the Welcome that carried it. Returns
+    /// the wire value if it does not match.
+    pub(crate) fn resolve_with(
+        self,
+        ciphersuite: Ciphersuite,
+    ) -> Result<VerifiableGroupInfo, VerifiableCiphersuite> {
+        if self.ciphersuite().value() != ciphersuite.id() {
+            return Err(self.ciphersuite());
+        }
+        Ok(self.with_ciphersuite(ciphersuite))
+    }
+
+    fn with_ciphersuite(self, ciphersuite: Ciphersuite) -> VerifiableGroupInfo {
+        VerifiableGroupInfo {
+            payload: GroupInfoTBS {
+                group_context: self.payload.group_context.with_ciphersuite(ciphersuite),
+                extensions: self.payload.extensions,
+                confirmation_tag: self.payload.confirmation_tag,
+                signer: self.payload.signer,
+            },
+            signature: self.signature,
+        }
+    }
+}
+
+impl From<VerifiableGroupInfo> for VerifiableGroupInfoIn {
+    fn from(value: VerifiableGroupInfo) -> Self {
+        Self {
+            payload: GroupInfoTbsIn {
+                group_context: value.payload.group_context.into(),
+                extensions: value.payload.extensions,
+                confirmation_tag: value.payload.confirmation_tag,
+                signer: value.payload.signer,
+            },
+            signature: value.signature,
+        }
+    }
 }
 
 /// Error related to group info.
@@ -61,30 +171,6 @@ impl VerifiableGroupInfo {
             signer,
         };
         Self { payload, signature }
-    }
-
-    pub(crate) fn try_from_ciphertext(
-        skey: &AeadKey,
-        nonce: &AeadNonce,
-        ciphertext: &[u8],
-        context: &[u8],
-        crypto: &impl OpenMlsCrypto,
-    ) -> Result<Self, GroupInfoError> {
-        let verifiable_group_info_plaintext = skey
-            .aead_open(crypto, ciphertext, context, nonce)
-            .map_err(|_| GroupInfoError::DecryptionFailed)?;
-
-        let mut verifiable_group_info_plaintext_slice = verifiable_group_info_plaintext.as_slice();
-
-        let verifiable_group_info =
-            VerifiableGroupInfo::tls_deserialize(&mut verifiable_group_info_plaintext_slice)
-                .map_err(|_| GroupInfoError::Malformed)?;
-
-        if !verifiable_group_info_plaintext_slice.is_empty() {
-            return Err(GroupInfoError::Malformed);
-        }
-
-        Ok(verifiable_group_info)
     }
 
     /// Get (unverified) ciphersuite of the verifiable group info.
@@ -150,6 +236,23 @@ impl From<VerifiableGroupInfo> for GroupInfo {
             signature: vgi.signature,
             serialized_payload: None,
         }
+    }
+}
+
+#[cfg(any(feature = "test-utils", test))]
+impl From<VerifiableGroupInfoIn> for VerifiableGroupInfo {
+    fn from(vgi: VerifiableGroupInfoIn) -> Self {
+        let ciphersuite = Ciphersuite::try_from(vgi.ciphersuite().value())
+            .expect("test-only conversion of a group info with a built-in ciphersuite");
+        vgi.resolve_with(ciphersuite)
+            .expect("ciphersuite was just taken from the group info")
+    }
+}
+
+#[cfg(any(feature = "test-utils", test))]
+impl From<VerifiableGroupInfoIn> for GroupInfo {
+    fn from(vgi: VerifiableGroupInfoIn) -> Self {
+        VerifiableGroupInfo::from(vgi).into()
     }
 }
 

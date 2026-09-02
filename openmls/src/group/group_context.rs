@@ -1,7 +1,7 @@
 //! # Group Context
 
 use openmls_traits::crypto::OpenMlsCrypto;
-use openmls_traits::types::Ciphersuite;
+use openmls_traits::types::{Ciphersuite, VerifiableCiphersuite};
 
 use super::*;
 #[cfg(feature = "extensions-draft")]
@@ -50,6 +50,63 @@ pub struct GroupContext {
     tree_hash: VLBytes,
     confirmed_transcript_hash: VLBytes,
     extensions: Extensions<Self>,
+}
+
+/// A [`GroupContext`] as it arrives from the wire, before the crypto
+/// provider has resolved its ciphersuite.
+#[derive(
+    Debug, Clone, PartialEq, Eq, TlsSerialize, TlsDeserialize, TlsDeserializeBytes, TlsSize,
+)]
+pub(crate) struct GroupContextIn {
+    protocol_version: ProtocolVersion,
+    ciphersuite: VerifiableCiphersuite,
+    group_id: GroupId,
+    epoch: GroupEpoch,
+    tree_hash: VLBytes,
+    confirmed_transcript_hash: VLBytes,
+    extensions: Extensions<GroupContext>,
+}
+
+impl GroupContextIn {
+    pub(crate) fn ciphersuite(&self) -> VerifiableCiphersuite {
+        self.ciphersuite
+    }
+
+    pub(crate) fn group_id(&self) -> &GroupId {
+        &self.group_id
+    }
+
+    pub(crate) fn epoch(&self) -> GroupEpoch {
+        self.epoch
+    }
+
+    /// Turns this into a [`GroupContext`] with the ciphersuite the caller has
+    /// resolved from the wire value.
+    pub(crate) fn with_ciphersuite(self, ciphersuite: Ciphersuite) -> GroupContext {
+        GroupContext {
+            protocol_version: self.protocol_version,
+            ciphersuite,
+            group_id: self.group_id,
+            epoch: self.epoch,
+            tree_hash: self.tree_hash,
+            confirmed_transcript_hash: self.confirmed_transcript_hash,
+            extensions: self.extensions,
+        }
+    }
+}
+
+impl From<GroupContext> for GroupContextIn {
+    fn from(value: GroupContext) -> Self {
+        Self {
+            protocol_version: value.protocol_version,
+            ciphersuite: value.ciphersuite.into(),
+            group_id: value.group_id,
+            epoch: value.epoch,
+            tree_hash: value.tree_hash,
+            confirmed_transcript_hash: value.confirmed_transcript_hash,
+            extensions: value.extensions,
+        }
+    }
 }
 
 #[cfg(any(feature = "test-utils", test))]

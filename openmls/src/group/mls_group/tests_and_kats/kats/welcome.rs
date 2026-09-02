@@ -34,7 +34,7 @@ use crate::{
     group::{HpkePrivateKey, OpenMlsSignaturePublicKey, SignaturePublicKey},
     key_packages::*,
     messages::*,
-    prelude::group_info::{GroupInfo, VerifiableGroupInfo},
+    prelude::group_info::{GroupInfo, VerifiableGroupInfo, VerifiableGroupInfoIn},
     schedule::{
         psk::{load_psks, store::ResumptionPskStore, PskSecret},
         KeySchedule,
@@ -194,7 +194,7 @@ pub fn run_test_vector(test_vector: WelcomeTestVector) -> Result<(), &'static st
         key_package_bundle.init_private_key(),
         encrypted_group_secrets.encrypted_group_secrets(),
         welcome.encrypted_group_info(),
-        welcome.ciphersuite(),
+        welcome.ciphersuite().resolve(provider.crypto()).unwrap(),
         provider.crypto(),
     )
     .unwrap();
@@ -210,7 +210,7 @@ pub fn run_test_vector(test_vector: WelcomeTestVector) -> Result<(), &'static st
     };
 
     let mut key_schedule = KeySchedule::init(
-        welcome.ciphersuite(),
+        welcome.ciphersuite().resolve(provider.crypto()).unwrap(),
         provider.crypto(),
         &group_secrets.joiner_secret,
         psk_secret,
@@ -220,18 +220,26 @@ pub fn run_test_vector(test_vector: WelcomeTestVector) -> Result<(), &'static st
     let group_info: GroupInfo = {
         let verifiable_group_info: VerifiableGroupInfo = {
             let (welcome_key, welcome_nonce) = key_schedule
-                .welcome(provider.crypto(), welcome.ciphersuite())
+                .welcome(
+                    provider.crypto(),
+                    welcome.ciphersuite().resolve(provider.crypto()).unwrap(),
+                )
                 .unwrap()
-                .derive_welcome_key_nonce(provider.crypto(), welcome.ciphersuite())
+                .derive_welcome_key_nonce(
+                    provider.crypto(),
+                    welcome.ciphersuite().resolve(provider.crypto()).unwrap(),
+                )
                 .unwrap();
 
-            VerifiableGroupInfo::try_from_ciphertext(
+            VerifiableGroupInfoIn::try_from_ciphertext(
                 &welcome_key,
                 &welcome_nonce,
                 welcome.encrypted_group_info(),
                 &[],
                 provider.crypto(),
             )
+            .unwrap()
+            .resolve_with(welcome.ciphersuite().resolve(provider.crypto()).unwrap())
             .unwrap()
         };
         println!("{verifiable_group_info:?}");
@@ -256,7 +264,10 @@ pub fn run_test_vector(test_vector: WelcomeTestVector) -> Result<(), &'static st
 
     let (_group_epoch_secrets, message_secrets) = {
         let EpochSecretsResult { epoch_secrets, .. } = key_schedule
-            .epoch_secrets(provider.crypto(), welcome.ciphersuite())
+            .epoch_secrets(
+                provider.crypto(),
+                welcome.ciphersuite().resolve(provider.crypto()).unwrap(),
+            )
             .unwrap();
 
         epoch_secrets.split_secrets(
@@ -270,7 +281,7 @@ pub fn run_test_vector(test_vector: WelcomeTestVector) -> Result<(), &'static st
         .confirmation_key()
         .tag(
             provider.crypto(),
-            welcome.ciphersuite(),
+            welcome.ciphersuite().resolve(provider.crypto()).unwrap(),
             group_context.confirmed_transcript_hash(),
         )
         .unwrap();

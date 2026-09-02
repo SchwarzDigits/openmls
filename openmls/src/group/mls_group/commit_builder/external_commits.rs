@@ -1,4 +1,4 @@
-use openmls_traits::{crypto::OpenMlsCrypto, types::Ciphersuite};
+use openmls_traits::types::{Ciphersuite, CiphersuiteResolveError, VerifiableCiphersuite};
 use thiserror::Error;
 use tls_codec::Serialize as _;
 
@@ -21,7 +21,7 @@ use crate::{
         ValidationError, PURE_PLAINTEXT_WIRE_FORMAT_POLICY,
     },
     messages::{
-        group_info::VerifiableGroupInfo,
+        group_info::VerifiableGroupInfoIn,
         proposals::{
             ExternalInitProposal, PreSharedKeyProposal, Proposal, ProposalOrRefType, ProposalType,
             RemoveProposal,
@@ -48,6 +48,9 @@ pub enum ExternalCommitBuilderError<StorageError> {
     /// We don't support the ciphersuite of the group we are trying to join.
     #[error("Ciphersuite {0:?} of the group we are trying to join is not supported by the crypto provider.")]
     UnsupportedCiphersuite(Ciphersuite),
+    /// Neither the library nor the crypto provider know the ciphersuite of the group we are trying to join.
+    #[error("Ciphersuite {0:?} of the group we are trying to join is not known.")]
+    UnknownCiphersuite(VerifiableCiphersuite),
     /// This error indicates the public tree is invalid. See
     /// [`CreationFromExternalError`] for more details.
     #[error(transparent)]
@@ -161,7 +164,7 @@ impl ExternalCommitBuilder {
     pub fn build_group<Provider: OpenMlsProvider>(
         self,
         provider: &Provider,
-        verifiable_group_info: VerifiableGroupInfo,
+        verifiable_group_info: impl Into<VerifiableGroupInfoIn>,
         credential_with_key: CredentialWithKey,
     ) -> Result<
         CommitBuilder<'_, Initial, MlsGroup>,
@@ -177,11 +180,19 @@ impl ExternalCommitBuilder {
             emulation_group,
         } = self;
 
-        let group_ciphersuite = verifiable_group_info.ciphersuite();
-        provider
-            .crypto()
-            .supports(group_ciphersuite)
-            .map_err(|_| ExternalCommitBuilderError::UnsupportedCiphersuite(group_ciphersuite))?;
+        let verifiable_group_info: VerifiableGroupInfoIn = verifiable_group_info.into();
+        let wire_ciphersuite = verifiable_group_info.ciphersuite();
+        let verifiable_group_info =
+            verifiable_group_info
+                .resolve(provider.crypto())
+                .map_err(|e| match e {
+                    CiphersuiteResolveError::Unsupported(ciphersuite) => {
+                        ExternalCommitBuilderError::UnsupportedCiphersuite(ciphersuite)
+                    }
+                    CiphersuiteResolveError::Grease | CiphersuiteResolveError::Unknown => {
+                        ExternalCommitBuilderError::UnknownCiphersuite(wire_ciphersuite)
+                    }
+                })?;
 
         // Build the ratchet tree
 

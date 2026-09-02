@@ -14,7 +14,7 @@ use crate::{
     group::{CreateCommitError, WelcomeError, WelcomeKeyMaterial},
     key_packages::{KeyPackage, KeyPackageBundle},
     messages::{
-        group_info::{GroupInfo, GroupInfoTBS, VerifiableGroupInfo},
+        group_info::{GroupInfo, GroupInfoTBS, VerifiableGroupInfo, VerifiableGroupInfoIn},
         ConfirmationTag, GroupSecrets, GroupSecretsError, PathSecret, Welcome,
     },
     schedule::{
@@ -120,13 +120,15 @@ impl FrankenWelcome {
         )?;
 
         // Decrypt GroupInfo
-        let group_info: GroupInfo = VerifiableGroupInfo::try_from_ciphertext(
+        let group_info: GroupInfo = VerifiableGroupInfoIn::try_from_ciphertext(
             &welcome_key,
             &welcome_nonce,
             self.encrypted_group_info.as_slice(),
             &[],
             crypto,
         )?
+        .resolve_with(ciphersuite)
+        .map_err(|_| WelcomeError::CiphersuiteMismatch)?
         .into();
 
         Ok((ciphersuite, group_secrets, group_info.into()))

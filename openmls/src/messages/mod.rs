@@ -7,7 +7,9 @@ use hash_ref::HashReference;
 use openmls_traits::{
     crypto::OpenMlsCrypto,
     storage::StorageProvider,
-    types::{Ciphersuite, HpkeCiphertext, HpkeKeyPair},
+    types::{
+        Ciphersuite, CiphersuiteResolveError, HpkeCiphertext, HpkeKeyPair, VerifiableCiphersuite,
+    },
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -73,7 +75,7 @@ use self::{proposals::*, proposals_in::ProposalOrRefIn};
     serde::Deserialize,
 )]
 pub struct Welcome {
-    cipher_suite: Ciphersuite,
+    cipher_suite: VerifiableCiphersuite,
     secrets: Vec<EncryptedGroupSecrets>,
     encrypted_group_info: VLBytes,
 }
@@ -87,7 +89,7 @@ impl Welcome {
         encrypted_group_info: Vec<u8>,
     ) -> Self {
         Self {
-            cipher_suite,
+            cipher_suite: cipher_suite.into(),
             secrets,
             encrypted_group_info: encrypted_group_info.into(),
         }
@@ -102,9 +104,25 @@ impl Welcome {
             .find(|egs| hash_ref == egs.new_member())
     }
 
-    /// Returns a reference to the ciphersuite in this Welcome message.
-    pub fn ciphersuite(&self) -> Ciphersuite {
+    /// The ciphersuite as it appears in the message. It becomes a
+    /// [`Ciphersuite`] once a crypto provider has resolved it, which is what
+    /// [`StagedWelcome`](crate::group::StagedWelcome) does.
+    pub fn ciphersuite(&self) -> VerifiableCiphersuite {
         self.cipher_suite
+    }
+
+    pub(crate) fn resolve_ciphersuite<StorageError>(
+        &self,
+        crypto: &impl OpenMlsCrypto,
+    ) -> Result<Ciphersuite, WelcomeError<StorageError>> {
+        self.cipher_suite.resolve(crypto).map_err(|e| match e {
+            CiphersuiteResolveError::Unsupported(ciphersuite) => {
+                WelcomeError::UnsupportedCiphersuite(ciphersuite)
+            }
+            CiphersuiteResolveError::Grease | CiphersuiteResolveError::Unknown => {
+                WelcomeError::UnknownCiphersuite(self.cipher_suite)
+            }
+        })
     }
 
     /// Returns a reference to the encrypted group secrets in this Welcome message.
@@ -132,6 +150,9 @@ impl Welcome {
         &self,
         provider: &Provider,
     ) -> Result<Option<WelcomeKeyMaterial>, WelcomeError<Provider::StorageError>> {
+        #[cfg(feature = "virtual-clients-draft")]
+        let ciphersuite = self.resolve_ciphersuite(provider.crypto())?;
+
         for egs in &self.secrets {
             let hash_ref = egs.new_member();
 
@@ -145,7 +166,7 @@ impl Welcome {
 
             #[cfg(feature = "virtual-clients-draft")]
             if let Some(material) =
-                crate::group::resolve_vc_welcome_material(provider, self.ciphersuite(), &hash_ref)?
+                crate::group::resolve_vc_welcome_material(provider, ciphersuite, &hash_ref)?
             {
                 return Ok(Some(WelcomeKeyMaterial::with_vc_welcome_material(material)));
             }

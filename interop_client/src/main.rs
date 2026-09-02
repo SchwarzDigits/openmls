@@ -562,7 +562,10 @@ impl MlsClient for MlsClientImpl {
             let ratchet_tree = ratchet_tree_from_config(request.ratchet_tree.clone());
 
             let provider = OpenMlsRustCrypto::default();
-            let ciphersuite = verifiable_group_info.ciphersuite();
+            let ciphersuite = verifiable_group_info
+                .ciphersuite()
+                .resolve(provider.crypto())
+                .map_err(|e| Status::invalid_argument(format!("group info ciphersuite: {e}")))?;
 
             let credential: Credential = BasicCredential::new(request.identity.to_vec()).into();
 
@@ -1887,7 +1890,10 @@ impl MlsClient for MlsClientImpl {
                 }
             }
         };
-        let ciphersuite = verifiable_group_info.ciphersuite();
+        let ciphersuite = verifiable_group_info
+            .ciphersuite()
+            .resolve(OpenMlsRustCrypto::default().crypto())
+            .map_err(|e| Status::invalid_argument(format!("group info ciphersuite: {e}")))?;
         let group_id = verifiable_group_info.group_id().clone();
         let epoch = verifiable_group_info.epoch();
 
@@ -2166,8 +2172,14 @@ impl MlsClient for MlsClientImpl {
             "externalPSK" => {
                 // RFC 9420 §12.1.8.2 permits external senders to send PSK proposals.
                 let provider = OpenMlsRustCrypto::default();
+                let ciphersuite = verifiable_group_info
+                    .ciphersuite()
+                    .resolve(provider.crypto())
+                    .map_err(|e| {
+                        Status::invalid_argument(format!("group info ciphersuite: {e}"))
+                    })?;
                 let psk_id = PreSharedKeyId::new(
-                    verifiable_group_info.ciphersuite(),
+                    ciphersuite,
                     provider.rand(),
                     Psk::External(ExternalPsk::new(description.psk_id.clone())),
                 )
@@ -2183,9 +2195,15 @@ impl MlsClient for MlsClientImpl {
             }
             "resumptionPSK" => {
                 let provider = OpenMlsRustCrypto::default();
+                let ciphersuite = verifiable_group_info
+                    .ciphersuite()
+                    .resolve(provider.crypto())
+                    .map_err(|e| {
+                        Status::invalid_argument(format!("group info ciphersuite: {e}"))
+                    })?;
                 let psk_nonce = provider
                     .rand()
-                    .random_vec(verifiable_group_info.ciphersuite().hash_length())
+                    .random_vec(ciphersuite.hash_length())
                     .map_err(|_| Status::internal("insufficient randomness for psk nonce"))?;
                 let psk_id = PreSharedKeyId::resumption(
                     ResumptionPskUsage::Application,

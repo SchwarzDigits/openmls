@@ -2,7 +2,7 @@
 //!
 //! This module contains errors that originate at lower levels and are partially re-exported in errors thrown by functions of the `MlsGroup` API.
 
-use openmls_traits::types::Ciphersuite;
+use openmls_traits::types::{Ciphersuite, VerifiableCiphersuite};
 use thiserror::Error;
 
 #[cfg(feature = "extensions-draft")]
@@ -41,8 +41,10 @@ pub enum WelcomeError<StorageError> {
     /// See [`LibraryError`] for more details.
     #[error(transparent)]
     LibraryError(#[from] LibraryError),
-    /// Ciphersuites in Welcome and key package bundle don't match.
-    #[error("Ciphersuites in Welcome and key package bundle don't match.")]
+    /// The ciphersuite of the Welcome does not match the GroupInfo inside it or the key package bundle.
+    #[error(
+        "The ciphersuite of the Welcome does not match the GroupInfo inside it or the key package bundle."
+    )]
     CiphersuiteMismatch,
     /// See [`GroupInfoError`] for more details.
     #[error(transparent)]
@@ -68,6 +70,9 @@ pub enum WelcomeError<StorageError> {
     /// The crypto provider doesn't support the ciphersuite of the group we are trying to join.
     #[error("Ciphersuite {0:?} of the group we are trying to join is not supported by the crypto provider.")]
     UnsupportedCiphersuite(Ciphersuite),
+    /// Neither the library nor the crypto provider know the ciphersuite of the group we are trying to join.
+    #[error("Ciphersuite {0:?} of the group we are trying to join is not known.")]
+    UnknownCiphersuite(VerifiableCiphersuite),
     /// Sender not found in tree.
     #[error("Sender not found in tree.")]
     UnknownSender,
@@ -154,6 +159,9 @@ pub enum ExternalCommitError<StorageError> {
     /// We don't support the ciphersuite of the group we are trying to join.
     #[error("Ciphersuite {0:?} of the group we are trying to join is not supported by the crypto provider.")]
     UnsupportedCiphersuite(Ciphersuite),
+    /// Neither the library nor the crypto provider know the ciphersuite of the group we are trying to join.
+    #[error("Ciphersuite {0:?} of the group we are trying to join is not known.")]
+    UnknownCiphersuite(VerifiableCiphersuite),
     /// Sender not found in tree.
     #[error("Sender not found in tree.")]
     UnknownSender,
@@ -191,6 +199,9 @@ impl<StorageError> From<ExternalCommitBuilderError<StorageError>>
             }
             ExternalCommitBuilderError::UnsupportedCiphersuite(ciphersuite) => {
                 ExternalCommitError::UnsupportedCiphersuite(ciphersuite)
+            }
+            ExternalCommitBuilderError::UnknownCiphersuite(ciphersuite) => {
+                ExternalCommitError::UnknownCiphersuite(ciphersuite)
             }
             ExternalCommitBuilderError::PublicGroupError(creation_from_external_error) => {
                 ExternalCommitError::PublicGroupError(creation_from_external_error)
@@ -622,6 +633,11 @@ pub enum ValidationError {
         "The ciphersuite in the KeyPackage of the Add proposal does not match the group context."
     )]
     InvalidAddProposalCiphersuite,
+    /// The ciphersuite of the ReInit proposal is not known or not supported by the crypto provider.
+    #[error(
+        "The ciphersuite of the ReInit proposal is not known or not supported by the crypto provider."
+    )]
+    InvalidReInitCiphersuite,
     /// See [`ExternalCommitValidationError`] for more details.
     #[error(transparent)]
     ExternalCommitValidation(#[from] ExternalCommitValidationError),

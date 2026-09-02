@@ -16,7 +16,8 @@
 
 use super::*;
 use crate::{
-    key_packages::KeyPackageIn, messages::group_info::VerifiableGroupInfo,
+    key_packages::KeyPackageIn,
+    messages::group_info::{VerifiableGroupInfo, VerifiableGroupInfoIn},
     versions::ProtocolVersion,
 };
 
@@ -63,7 +64,7 @@ pub enum MlsMessageBodyIn {
 
     /// Group information
     #[tls_codec(discriminant = 4)]
-    GroupInfo(VerifiableGroupInfo),
+    GroupInfo(VerifiableGroupInfoIn),
 
     /// KeyPackage
     #[tls_codec(discriminant = 5)]
@@ -162,7 +163,7 @@ impl MlsMessageIn {
     #[cfg(any(feature = "test-utils", test))]
     pub fn into_verifiable_group_info(self) -> Option<VerifiableGroupInfo> {
         match self.body {
-            MlsMessageBodyIn::GroupInfo(group_info) => Some(group_info),
+            MlsMessageBodyIn::GroupInfo(group_info) => Some(group_info.into()),
             _ => None,
         }
     }
