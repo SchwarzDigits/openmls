@@ -293,7 +293,7 @@ fn test_valsem242() {
             ProposalOrRef::proposal(Proposal::re_init(ReInitProposal {
                 group_id: alice_group.group_id().clone(),
                 version: Default::default(),
-                ciphersuite,
+                ciphersuite: ciphersuite.into(),
                 extensions: alice_group.context().extensions().clone(),
             }))
         };

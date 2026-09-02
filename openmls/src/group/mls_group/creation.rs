@@ -10,7 +10,7 @@ use crate::{
         errors::{ExportSecretError, ExternalCommitError, WelcomeError},
     },
     messages::{
-        group_info::{GroupInfo, VerifiableGroupInfo},
+        group_info::{GroupInfo, VerifiableGroupInfo, VerifiableGroupInfoIn},
         Welcome,
     },
     schedule::{
@@ -102,7 +102,7 @@ impl MlsGroup {
         provider: &Provider,
         signer: &impl Signer,
         ratchet_tree: Option<RatchetTreeIn>,
-        verifiable_group_info: VerifiableGroupInfo,
+        verifiable_group_info: impl Into<VerifiableGroupInfoIn>,
         mls_group_config: &MlsGroupJoinConfig,
         capabilities: Option<Capabilities>,
         extensions: Option<Extensions<LeafNode>>,
@@ -168,13 +168,13 @@ impl ProcessedWelcome {
         welcome: Welcome,
         branch_info: Option<&BranchInfo>,
     ) -> Result<Self, WelcomeError<Provider::StorageError>> {
-        let (resumption_psk_store, key_material, group_secrets) =
+        let (ciphersuite, resumption_psk_store, key_material, group_secrets) =
             decrypt_group_secrets(provider, mls_group_config, &welcome)?;
 
         finish_processed_welcome(
             provider,
             mls_group_config,
-            welcome.ciphersuite(),
+            ciphersuite,
             resumption_psk_store,
             key_material,
             group_secrets,
@@ -554,12 +554,12 @@ impl StagedWelcome {
         mls_group_config: &MlsGroupJoinConfig,
         welcome: Welcome,
     ) -> Result<PendingBranchWelcome, WelcomeError<Provider::StorageError>> {
-        let (resumption_psk_store, key_material, group_secrets) =
+        let (ciphersuite, resumption_psk_store, key_material, group_secrets) =
             decrypt_group_secrets(provider, mls_group_config, &welcome)?;
 
         Ok(PendingBranchWelcome {
             mls_group_config: mls_group_config.clone(),
-            ciphersuite: welcome.ciphersuite(),
+            ciphersuite,
             welcome,
             resumption_psk_store,
             key_material,
@@ -803,19 +803,20 @@ fn decrypt_group_secrets<Provider: OpenMlsProvider>(
     mls_group_config: &MlsGroupJoinConfig,
     welcome: &Welcome,
 ) -> Result<
-    (ResumptionPskStore, WelcomeKeyMaterial, GroupSecrets),
+    (
+        Ciphersuite,
+        ResumptionPskStore,
+        WelcomeKeyMaterial,
+        GroupSecrets,
+    ),
     WelcomeError<<Provider as OpenMlsProvider>::StorageError>,
 > {
-    let ciphersuite = welcome.ciphersuite();
-    // Check this before touching any stored key material: `keys_for_welcome`
+    // Resolve this before touching any stored key material: `keys_for_welcome`
     // consumes a matching (non-last-resort) key package.
-    provider
-        .crypto()
-        .supports(ciphersuite)
-        .map_err(|_| WelcomeError::UnsupportedCiphersuite(ciphersuite))?;
+    let ciphersuite = welcome.resolve_ciphersuite(provider.crypto())?;
 
     let (resumption_psk_store, key_material) =
-        keys_for_welcome(mls_group_config, welcome, provider)?;
+        keys_for_welcome(mls_group_config, welcome, provider, ciphersuite)?;
 
     let Some(egs) =
         welcome.find_encrypted_group_secret(key_material.key_package_ref(provider.crypto())?)
@@ -823,11 +824,14 @@ fn decrypt_group_secrets<Provider: OpenMlsProvider>(
         return Err(WelcomeError::JoinerSecretNotFound);
     };
 
-    // This check seems to be superfluous from the perspective of the RFC, but still doesn't
-    // seem like a bad idea. There is no local KeyPackage to compare against on the
-    // virtual-client path, where the derived material is implicitly the welcome's ciphersuite.
+    // https://validation.openmls.tech/#valn1404
+    // The Welcome's ciphersuite has to be the one of the local KeyPackage. The
+    // GroupInfo inside the Welcome is checked against the Welcome below, so
+    // all three agree. There is no local KeyPackage to compare against on the
+    // virtual-client path, where the derived material is implicitly the
+    // Welcome's ciphersuite.
     if let Some(key_package_bundle) = key_material.key_package_bundle() {
-        if welcome.ciphersuite() != key_package_bundle.key_package().ciphersuite() {
+        if ciphersuite != key_package_bundle.key_package().ciphersuite() {
             let e = WelcomeError::CiphersuiteMismatch;
             log::debug!("new_from_welcome {e:?}");
             return Err(e);
@@ -845,7 +849,12 @@ fn decrypt_group_secrets<Provider: OpenMlsProvider>(
     // Validate PSKs
     PreSharedKeyId::validate_in_welcome(&group_secrets.psks, ciphersuite)?;
 
-    Ok((resumption_psk_store, key_material, group_secrets))
+    Ok((
+        ciphersuite,
+        resumption_psk_store,
+        key_material,
+        group_secrets,
+    ))
 }
 
 /// Finish processing a `Welcome` from its already-decrypted `GroupSecrets`.
@@ -926,13 +935,17 @@ fn finish_processed_welcome<Provider: OpenMlsProvider>(
         .derive_welcome_key_nonce(provider.crypto(), ciphersuite)
         .map_err(LibraryError::unexpected_crypto_error)?;
 
-    let verifiable_group_info = VerifiableGroupInfo::try_from_ciphertext(
+    // https://validation.openmls.tech/#valn1404
+    // The GroupInfo has to carry the Welcome's ciphersuite.
+    let verifiable_group_info = VerifiableGroupInfoIn::try_from_ciphertext(
         &welcome_key,
         &welcome_nonce,
         welcome.encrypted_group_info(),
         &[],
         provider.crypto(),
-    )?;
+    )?
+    .resolve_with(ciphersuite)
+    .map_err(|_| WelcomeError::CiphersuiteMismatch)?;
 
     let serialized_group_context = verifiable_group_info
         .group_context()
@@ -943,10 +956,9 @@ fn finish_processed_welcome<Provider: OpenMlsProvider>(
 
     let epoch_secrets = key_schedule.epoch_secrets(provider.crypto(), ciphersuite)?;
 
-    // On the bundle path, check the required capabilities and the
-    // ciphersuite against the local KeyPackage. On the virtual-client path
-    // there is no local KeyPackage: these are checked in staging against
-    // the own tree leaf instead.
+    // On the bundle path, check the required capabilities against the local
+    // KeyPackage. On the virtual-client path there is no local KeyPackage:
+    // these are checked in staging against the own tree leaf instead.
     if let Some(key_package_bundle) = key_material.key_package_bundle() {
         if let Some(required_capabilities) =
             verifiable_group_info.extensions().required_capabilities()
@@ -958,15 +970,6 @@ fn finish_processed_welcome<Provider: OpenMlsProvider>(
                 .leaf_node()
                 .capabilities()
                 .supports_required_capabilities(required_capabilities)?;
-        }
-
-        // https://validation.openmls.tech/#valn1404
-        // Verify that the cipher_suite in the GroupInfo matches the cipher_suite in the
-        // KeyPackage.
-        if verifiable_group_info.ciphersuite() != key_package_bundle.key_package().ciphersuite() {
-            let e = WelcomeError::CiphersuiteMismatch;
-            log::debug!("new_from_welcome {e:?}");
-            return Err(e);
         }
     }
 
@@ -981,15 +984,19 @@ fn finish_processed_welcome<Provider: OpenMlsProvider>(
     })
 }
 
-/// Read keys for decrypting the welcome message.
+/// Read keys for decrypting the welcome message. `ciphersuite` is the
+/// Welcome's, already resolved.
 fn keys_for_welcome<Provider: OpenMlsProvider>(
     mls_group_config: &MlsGroupJoinConfig,
     welcome: &Welcome,
     provider: &Provider,
+    ciphersuite: Ciphersuite,
 ) -> Result<
     (ResumptionPskStore, WelcomeKeyMaterial),
     WelcomeError<<Provider as OpenMlsProvider>::StorageError>,
 > {
+    #[cfg(not(feature = "virtual-clients-draft"))]
+    let _ = ciphersuite;
     let resumption_psk_store = ResumptionPskStore::new(mls_group_config.number_of_resumption_psks);
 
     for egs in welcome.secrets() {
@@ -1017,9 +1024,7 @@ fn keys_for_welcome<Provider: OpenMlsProvider>(
         }
 
         #[cfg(feature = "virtual-clients-draft")]
-        if let Some(material) =
-            resolve_vc_welcome_material(provider, welcome.ciphersuite(), &hash_ref)?
-        {
+        if let Some(material) = resolve_vc_welcome_material(provider, ciphersuite, &hash_ref)? {
             provider
                 .storage()
                 .delete_retained_key_package_material(&hash_ref)

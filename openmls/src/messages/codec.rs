@@ -8,10 +8,9 @@ use crate::messages::proposals_in::GroupContextExtensionProposalIn;
 
 use super::{
     proposals::{
-        ExternalInitProposal, PreSharedKeyProposal, Proposal, ProposalType, ReInitProposal,
-        RemoveProposal,
+        ExternalInitProposal, PreSharedKeyProposal, Proposal, ProposalType, RemoveProposal,
     },
-    proposals_in::{AddProposalIn, ProposalIn, UpdateProposalIn},
+    proposals_in::{AddProposalIn, ProposalIn, ReInitProposalIn, UpdateProposalIn},
     CustomProposal,
 };
 
@@ -134,7 +133,7 @@ impl Deserialize for ProposalIn {
                 ProposalIn::PreSharedKey(Box::new(PreSharedKeyProposal::tls_deserialize(bytes)?))
             }
             ProposalType::Reinit => {
-                ProposalIn::ReInit(Box::new(ReInitProposal::tls_deserialize(bytes)?))
+                ProposalIn::ReInit(Box::new(ReInitProposalIn::tls_deserialize(bytes)?))
             }
             ProposalType::ExternalInit => {
                 ProposalIn::ExternalInit(Box::new(ExternalInitProposal::tls_deserialize(bytes)?))

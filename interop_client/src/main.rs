@@ -463,7 +463,10 @@ impl MlsClient for MlsClientImpl {
             let ratchet_tree = ratchet_tree_from_config(request.ratchet_tree.clone());
 
             let provider = OpenMlsRustCrypto::default();
-            let ciphersuite = verifiable_group_info.ciphersuite();
+            let ciphersuite = verifiable_group_info
+                .ciphersuite()
+                .resolve(provider.crypto())
+                .map_err(|e| Status::invalid_argument(format!("group info ciphersuite: {e}")))?;
 
             let (credential_with_key, signer) = {
                 let credential = BasicCredential::new(request.identity.to_vec());

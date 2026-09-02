@@ -237,7 +237,7 @@ pub fn generate_test_vector(ciphersuite: Ciphersuite) -> MessagesTestVector {
     let reinit_proposal = ReInitProposal {
         group_id: alice_group.group_id().clone(),
         version: ProtocolVersion::Mls10,
-        ciphersuite,
+        ciphersuite: ciphersuite.into(),
         extensions: Extensions::single(Extension::RequiredCapabilities(
             RequiredCapabilitiesExtension::new(&[ExtensionType::LastResort], &[], &[]),
         ))
