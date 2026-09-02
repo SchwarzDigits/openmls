@@ -84,7 +84,7 @@ fn test_reinit_proposal_codec() {
     let orig = ReInitProposal {
         group_id: GroupId::random(provider.rand()),
         version: ProtocolVersion::default(),
-        ciphersuite: ciphersuite.into(),
+        ciphersuite,
         extensions: Extensions::empty(),
     };
     let encoded = orig

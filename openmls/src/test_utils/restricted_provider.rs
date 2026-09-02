@@ -6,6 +6,10 @@
 //! makes it possible to test the library's unsupported-ciphersuite error
 //! paths, which cannot be reached with the regular providers (they support
 //! every ciphersuite the tests can pick).
+//!
+//! The allowlist may contain custom ciphersuites built from primitives
+//! [`RustCrypto`] implements; [`OpenMlsCrypto::ciphersuite`] hands them out for
+//! their code points, which is what makes them usable on the receiving side.
 
 use openmls_rust_crypto::{MemoryStorage, OpenMlsRustCrypto, RustCrypto};
 use openmls_traits::{
@@ -36,6 +40,17 @@ impl OpenMlsCrypto for RestrictedCrypto {
 
     fn supported_ciphersuites(&self) -> Vec<Ciphersuite> {
         self.allowed.clone()
+    }
+
+    fn ciphersuite(&self, id: u16) -> Result<Ciphersuite, CryptoError> {
+        match self
+            .allowed
+            .iter()
+            .find(|ciphersuite| ciphersuite.id() == id)
+        {
+            Some(ciphersuite) => Ok(*ciphersuite),
+            None => self.builtin_ciphersuite(id),
+        }
     }
 
     fn hkdf_extract(
@@ -230,7 +245,7 @@ pub struct RestrictedProvider {
 
 impl RestrictedProvider {
     /// Creates a provider that claims support for exactly the given
-    /// ciphersuites.
+    /// ciphersuites, built-in or custom.
     pub fn new(allowed: Vec<Ciphersuite>) -> Self {
         Self {
             crypto: RestrictedCrypto {
