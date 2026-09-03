@@ -256,3 +256,104 @@ fn storage() {
     assert_eq!(loaded.ciphersuite(), CUSTOM);
     assert_eq!(loaded.ciphersuite().params(), CUSTOM.params());
 }
+
+/// A ciphersuite on a KEM the provider does not implement is not a panic
+/// anywhere, but an error from the first HPKE operation.
+#[test]
+fn unknown_kem() {
+    use openmls_traits::{crypto::OpenMlsCrypto, types::CryptoError};
+
+    // ML-KEM-768 with P-256, draft-ietf-hpke-pq.
+    let params = CiphersuiteParams {
+        kem: HpkeKemType::new(0x0050),
+        ..CUSTOM.params()
+    };
+    let suite = Ciphersuite::custom(0xF0F1, params);
+    let provider = RestrictedProvider::new(vec![suite]);
+
+    let err = provider
+        .crypto()
+        .derive_hpke_keypair(suite.hpke_config(), &[0u8; 32])
+        .unwrap_err();
+    assert_eq!(err, CryptoError::UnsupportedKem);
+
+    let alice = credential("Alice", &provider);
+    assert!(MlsGroup::builder()
+        .ciphersuite(suite)
+        .with_capabilities(Capabilities::for_provider(provider.crypto()))
+        .build(&provider, &alice.signer, alice.credential_with_key)
+        .is_err());
+}
+
+/// A ciphersuite on a hash the provider does not implement, the example that
+/// opened openmls#1915, is rejected by the provider's hash call, and group
+/// creation fails with that instead of panicking.
+#[test]
+fn unknown_hash() {
+    use openmls_traits::{crypto::OpenMlsCrypto, types::CryptoError};
+
+    let params = CiphersuiteParams {
+        hash: HashType::new(0x0100, 32),
+        ..CUSTOM.params()
+    };
+    let suite = Ciphersuite::custom(0xF0F2, params);
+    let provider = RestrictedProvider::new(vec![suite]);
+    assert_eq!(suite.hash_length(), 32);
+    assert_eq!(
+        provider
+            .crypto()
+            .hash(suite.hash_algorithm(), b"")
+            .unwrap_err(),
+        CryptoError::UnsupportedHashAlgorithm
+    );
+
+    let alice = credential("Alice", &provider);
+    assert!(MlsGroup::builder()
+        .ciphersuite(suite)
+        .with_capabilities(Capabilities::for_provider(provider.crypto()))
+        .build(&provider, &alice.signer, alice.credential_with_key)
+        .is_err());
+}
+
+/// A ciphersuite on an AEAD the provider does not implement is rejected by
+/// the provider's encryption call rather than panicking.
+#[test]
+fn unknown_aead() {
+    use openmls_traits::{crypto::OpenMlsCrypto, types::CryptoError};
+
+    let params = CiphersuiteParams {
+        aead: AeadType::new(0x0004, 32, 16),
+        ..CUSTOM.params()
+    };
+    let suite = Ciphersuite::custom(0xF0F3, params);
+    let provider = RestrictedProvider::new(vec![suite]);
+    assert_eq!(suite.aead_key_length(), 32);
+    assert_eq!(
+        provider
+            .crypto()
+            .aead_encrypt(suite.aead_algorithm(), &[0u8; 32], b"", &[0u8; 12], b"")
+            .unwrap_err(),
+        CryptoError::UnsupportedAeadAlgorithm
+    );
+}
+
+/// A ciphersuite on a signature scheme the provider does not implement, ECDSA
+/// on brainpoolP256r1 from RFC 8734, is rejected at key generation.
+#[test]
+fn unknown_signature_scheme() {
+    use openmls_traits::{crypto::OpenMlsCrypto, types::CryptoError};
+
+    let params = CiphersuiteParams {
+        signature: SignatureScheme::new(0x081A),
+        ..CUSTOM.params()
+    };
+    let suite = Ciphersuite::custom(0xF0F4, params);
+    let provider = RestrictedProvider::new(vec![suite]);
+    assert_eq!(
+        provider
+            .crypto()
+            .signature_key_gen(suite.signature_algorithm())
+            .unwrap_err(),
+        CryptoError::UnsupportedSignatureScheme
+    );
+}
