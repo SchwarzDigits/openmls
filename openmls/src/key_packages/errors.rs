@@ -2,7 +2,7 @@
 //!
 //! `KeyPackageError` are thrown on errors handling `KeyPackage`s.
 
-use openmls_traits::types::Ciphersuite;
+use openmls_traits::types::{Ciphersuite, VerifiableCiphersuite};
 use thiserror::Error;
 
 use crate::{
@@ -43,6 +43,10 @@ pub enum KeyPackageVerifyError {
     /// The ciphersuite is not supported by the crypto provider.
     #[error("Ciphersuite {0:?} is not supported by the crypto provider.")]
     UnsupportedCiphersuite(Ciphersuite),
+    /// Neither the library nor the crypto provider know the ciphersuite, or it
+    /// is a GREASE value.
+    #[error("Ciphersuite {0:?} is not known.")]
+    UnknownCiphersuite(VerifiableCiphersuite),
     /// The provided extension is not allowed in key packages
     #[error(transparent)]
     ExtensionTypeNotValidInKeyPackage(#[from] ExtensionTypeNotValidInKeyPackageError),

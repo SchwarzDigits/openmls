@@ -7,14 +7,17 @@ use crate::{
     credentials::CredentialWithKey,
     extensions::{AnyObject, Extensions},
     framing::SenderContext,
-    group::errors::ValidationError,
+    group::{errors::ValidationError, GroupContext, GroupId},
     key_packages::*,
     prelude::InvalidExtensionError,
     treesync::node::leaf_node::{LeafNodeIn, TreePosition, VerifiableLeafNode},
     versions::ProtocolVersion,
 };
 
-use openmls_traits::{crypto::OpenMlsCrypto, types::Ciphersuite};
+use openmls_traits::{
+    crypto::OpenMlsCrypto,
+    types::{Ciphersuite, VerifiableCiphersuite},
+};
 use serde::{Deserialize, Serialize};
 use tls_codec::{TlsDeserialize, TlsDeserializeBytes, TlsSerialize, TlsSize};
 
@@ -56,7 +59,7 @@ pub enum ProposalIn {
     Update(Box<UpdateProposalIn>),
     Remove(Box<RemoveProposal>),
     PreSharedKey(Box<PreSharedKeyProposal>),
-    ReInit(Box<ReInitProposal>),
+    ReInit(Box<ReInitProposalIn>),
     ExternalInit(Box<ExternalInitProposal>),
     GroupContextExtensions(Box<GroupContextExtensionProposalIn>),
     // # Extensions
@@ -122,7 +125,7 @@ impl ProposalIn {
             }
             ProposalIn::Remove(remove) => Proposal::Remove(remove),
             ProposalIn::PreSharedKey(psk) => Proposal::PreSharedKey(psk),
-            ProposalIn::ReInit(reinit) => Proposal::ReInit(reinit),
+            ProposalIn::ReInit(reinit) => Proposal::ReInit(Box::new(reinit.validate(crypto)?)),
             ProposalIn::ExternalInit(external_init) => Proposal::ExternalInit(external_init),
             ProposalIn::GroupContextExtensions(group_context_extension) => {
                 Proposal::group_context_extensions(group_context_extension.validate()?)
@@ -174,7 +177,7 @@ impl AddProposalIn {
         protocol_version: ProtocolVersion,
         ciphersuite: Ciphersuite,
     ) -> Result<AddProposal, ValidationError> {
-        if self.key_package.unverified_ciphersuite() != ciphersuite {
+        if self.key_package.unverified_ciphersuite() != VerifiableCiphersuite::from(ciphersuite) {
             return Err(ValidationError::InvalidAddProposalCiphersuite);
         }
         let key_package = self.key_package.validate(crypto, protocol_version)?;
@@ -387,7 +390,7 @@ impl From<ProposalIn> for crate::messages::proposals::Proposal {
             ProposalIn::Update(update) => Self::Update((*update).into()),
             ProposalIn::Remove(remove) => Self::Remove(remove),
             ProposalIn::PreSharedKey(psk) => Self::PreSharedKey(psk),
-            ProposalIn::ReInit(reinit) => Self::ReInit(reinit),
+            ProposalIn::ReInit(reinit) => Self::ReInit(Box::new((*reinit).into())),
             ProposalIn::ExternalInit(external_init) => Self::ExternalInit(external_init),
             ProposalIn::GroupContextExtensions(group_context_extension) => {
                 Self::GroupContextExtensions((*group_context_extension).into())
@@ -409,7 +412,7 @@ impl From<crate::messages::proposals::Proposal> for ProposalIn {
             Proposal::Update(update) => Self::Update((*update).into()),
             Proposal::Remove(remove) => Self::Remove(remove),
             Proposal::PreSharedKey(psk) => Self::PreSharedKey(psk),
-            Proposal::ReInit(reinit) => Self::ReInit(reinit),
+            Proposal::ReInit(reinit) => Self::ReInit(Box::new((*reinit).into())),
             Proposal::ExternalInit(external_init) => Self::ExternalInit(external_init),
             Proposal::GroupContextExtensions(group_context_extension) => {
                 Self::GroupContextExtensions((*group_context_extension).into())
@@ -471,5 +474,76 @@ impl GroupContextExtensionProposalIn {
                 .try_into()
                 .map_err(InvalidExtensionError::from)?,
         ))
+    }
+}
+
+/// ReInit proposal as it arrives from the wire, before the crypto provider has
+/// resolved its ciphersuite.
+#[derive(
+    Debug,
+    PartialEq,
+    Eq,
+    Clone,
+    Serialize,
+    Deserialize,
+    TlsDeserialize,
+    TlsDeserializeBytes,
+    TlsSerialize,
+    TlsSize,
+)]
+pub struct ReInitProposalIn {
+    pub(crate) group_id: GroupId,
+    pub(crate) version: ProtocolVersion,
+    pub(crate) ciphersuite: VerifiableCiphersuite,
+    pub(crate) extensions: Extensions<GroupContext>,
+}
+
+impl ReInitProposalIn {
+    /// The ciphersuite as it arrived from the wire.
+    pub fn ciphersuite(&self) -> VerifiableCiphersuite {
+        self.ciphersuite
+    }
+
+    /// Resolves the ciphersuite with the crypto provider. A GREASE value, an
+    /// unknown code point and a ciphersuite the provider does not support are
+    /// all rejected.
+    pub(crate) fn validate(
+        self,
+        crypto: &impl OpenMlsCrypto,
+    ) -> Result<ReInitProposal, ValidationError> {
+        let ciphersuite = self
+            .ciphersuite
+            .resolve(crypto)
+            .map_err(|_| ValidationError::InvalidReInitCiphersuite)?;
+        Ok(ReInitProposal {
+            group_id: self.group_id,
+            version: self.version,
+            ciphersuite,
+            extensions: self.extensions,
+        })
+    }
+}
+
+impl From<ReInitProposal> for ReInitProposalIn {
+    fn from(value: ReInitProposal) -> Self {
+        Self {
+            group_id: value.group_id,
+            version: value.version,
+            ciphersuite: value.ciphersuite.into(),
+            extensions: value.extensions,
+        }
+    }
+}
+
+#[cfg(any(feature = "test-utils", test))]
+impl From<ReInitProposalIn> for ReInitProposal {
+    fn from(value: ReInitProposalIn) -> Self {
+        Self {
+            group_id: value.group_id,
+            version: value.version,
+            ciphersuite: Ciphersuite::try_from(value.ciphersuite.value())
+                .expect("test-only conversion of a ReInit proposal with a built-in ciphersuite"),
+            extensions: value.extensions,
+        }
     }
 }

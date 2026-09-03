@@ -51,7 +51,7 @@ impl AeadType {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
 #[repr(u8)]
 #[allow(non_camel_case_types)]
 /// Hash types
@@ -370,7 +370,7 @@ impl From<Vec<u8>> for ExporterSecret {
 pub struct VerifiableCiphersuite(u16);
 
 impl VerifiableCiphersuite {
-    pub fn new(value: u16) -> Self {
+    pub const fn new(value: u16) -> Self {
         Self(value)
     }
 
@@ -388,6 +388,28 @@ impl VerifiableCiphersuite {
     pub fn is_grease(&self) -> bool {
         crate::grease::is_grease_value(self.0)
     }
+
+    /// Turns a code point from the wire into a [`Ciphersuite`] the given
+    /// crypto provider can execute.
+    ///
+    /// GREASE values are rejected here, whatever the provider says.
+    pub fn resolve(
+        self,
+        crypto: &impl crate::crypto::OpenMlsCrypto,
+    ) -> Result<Ciphersuite, CiphersuiteResolveError> {
+        if self.is_grease() {
+            return Err(CiphersuiteResolveError::Grease);
+        }
+        match crypto.ciphersuite(self.0) {
+            Ok(ciphersuite) if ciphersuite.id() == self.0 => Ok(ciphersuite),
+            // A provider that answers with a different ciphersuite than the
+            // one asked for is treated like one that returned an error.
+            _ => match Ciphersuite::try_from(self.0) {
+                Ok(ciphersuite) => Err(CiphersuiteResolveError::Unsupported(ciphersuite)),
+                Err(_) => Err(CiphersuiteResolveError::Unknown),
+            },
+        }
+    }
 }
 
 impl From<Ciphersuite> for VerifiableCiphersuite {
@@ -396,6 +418,8 @@ impl From<Ciphersuite> for VerifiableCiphersuite {
     }
 }
 
+/// Only the built-in ciphersuites. A value from the wire is resolved with
+/// [`VerifiableCiphersuite::resolve`], which also asks the crypto provider.
 impl TryFrom<VerifiableCiphersuite> for Ciphersuite {
     type Error = tls_codec::Error;
 
@@ -404,10 +428,80 @@ impl TryFrom<VerifiableCiphersuite> for Ciphersuite {
     }
 }
 
+/// The parameters of a ciphersuite, for [`Ciphersuite::custom`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CiphersuiteParams {
+    /// The KEM for HPKE.
+    pub kem: HpkeKemType,
+    /// The KDF for HPKE.
+    pub kdf: HpkeKdfType,
+    /// The AEAD for messages, and by code point the AEAD for HPKE.
+    pub aead: AeadType,
+    /// The hash function.
+    pub hash: HashType,
+    /// The signature scheme.
+    pub signature: SignatureScheme,
+}
+
+/// Why a code point cannot be used for a custom ciphersuite.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CustomCiphersuiteError {
+    /// The code point is outside the range RFC 9420 reserves for private use,
+    /// `0xF000..=0xFFFF`. All GREASE values lie outside that range too.
+    OutsidePrivateUse,
+    /// The code point belongs to a built-in ciphersuite.
+    BuiltIn,
+}
+
+impl core::fmt::Display for CustomCiphersuiteError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::OutsidePrivateUse => {
+                f.write_str("the code point is outside the private use range 0xF000..=0xFFFF")
+            }
+            Self::BuiltIn => f.write_str("the code point belongs to a built-in ciphersuite"),
+        }
+    }
+}
+
+impl std::error::Error for CustomCiphersuiteError {}
+
+/// Why a code point from the wire could not be turned into a [`Ciphersuite`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CiphersuiteResolveError {
+    /// The code point is a GREASE value. Those are fine in capabilities and
+    /// nowhere else.
+    Grease,
+    /// Neither the built-in table nor the crypto provider know the code point.
+    Unknown,
+    /// The code point is a built-in ciphersuite the crypto provider does not
+    /// support.
+    Unsupported(Ciphersuite),
+}
+
+impl core::fmt::Display for CiphersuiteResolveError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Grease => f.write_str("the code point is a GREASE value"),
+            Self::Unknown => f.write_str("the code point is not a known ciphersuite"),
+            Self::Unsupported(ciphersuite) => {
+                write!(f, "{ciphersuite:?} is not supported by the crypto provider")
+            }
+        }
+    }
+}
+
+impl std::error::Error for CiphersuiteResolveError {}
+
 /// MLS ciphersuites.
 ///
 /// The identity of a ciphersuite is its code point; the parameters are kept
-/// alongside so the accessors stay infallible and `const`.
+/// alongside so the accessors stay infallible and `const`. The built-in
+/// ciphersuites are associated constants. A crypto provider can define
+/// further ones with [`Ciphersuite::custom`] on a code point from the private
+/// use range, and hand them out from [`OpenMlsCrypto::ciphersuite`].
+///
+/// [`OpenMlsCrypto::ciphersuite`]: crate::crypto::OpenMlsCrypto::ciphersuite
 #[derive(Clone, Copy)]
 pub struct Ciphersuite {
     id: u16,
@@ -704,17 +798,102 @@ impl Ciphersuite {
         self.id
     }
 
-    /// Position in `BUILTIN`. The fields are private and only the constants
-    /// construct a value, so every value is in the table.
-    fn index(&self) -> usize {
-        Self::BUILTIN
-            .iter()
-            .position(|c| c.id == self.id)
-            .expect("every Ciphersuite is built in")
+    /// The parameters of this ciphersuite.
+    #[inline]
+    pub const fn params(&self) -> CiphersuiteParams {
+        CiphersuiteParams {
+            kem: self.kem,
+            kdf: self.kdf,
+            aead: self.aead,
+            hash: self.hash,
+            signature: self.signature,
+        }
     }
 
-    fn name(&self) -> &'static str {
-        Self::NAMES[self.index()]
+    /// Whether this is one of the built-in ciphersuites.
+    pub const fn is_builtin(&self) -> bool {
+        Self::is_builtin_id(self.id)
+    }
+
+    const fn is_builtin_id(id: u16) -> bool {
+        let mut i = 0;
+        while i < Self::BUILTIN.len() {
+            if Self::BUILTIN[i].id == id {
+                return true;
+            }
+            i += 1;
+        }
+        false
+    }
+
+    /// The first code point RFC 9420 reserves for private use.
+    pub const PRIVATE_USE_START: u16 = 0xF000;
+
+    const fn check_custom_id(id: u16) -> Result<(), CustomCiphersuiteError> {
+        if id < Self::PRIVATE_USE_START {
+            Err(CustomCiphersuiteError::OutsidePrivateUse)
+        } else if Self::is_builtin_id(id) {
+            Err(CustomCiphersuiteError::BuiltIn)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// A ciphersuite that is not built in, for a crypto provider that can
+    /// execute it.
+    ///
+    /// `id` must be from the private use range, `0xF000..=0xFFFF`, and not the
+    /// code point of a built-in ciphersuite. Since this is a `const fn`, a
+    /// violation in a `const` is a compile error.
+    ///
+    /// The provider that defines the ciphersuite has to return it from
+    /// [`OpenMlsCrypto::ciphersuite`] for the same `id`, so that the value can
+    /// also be resolved when it arrives from the wire, and must always attach
+    /// the same parameters to a code point: equality is on the code point.
+    /// Leaf nodes have to advertise the ciphersuite in their capabilities.
+    ///
+    /// [`OpenMlsCrypto::ciphersuite`]: crate::crypto::OpenMlsCrypto::ciphersuite
+    pub const fn custom(id: u16, params: CiphersuiteParams) -> Self {
+        match Self::check_custom_id(id) {
+            Ok(()) => Self::with_params(id, params),
+            Err(CustomCiphersuiteError::OutsidePrivateUse) => {
+                panic!("custom ciphersuites use a code point from the private use range")
+            }
+            Err(CustomCiphersuiteError::BuiltIn) => {
+                panic!("the code point belongs to a built-in ciphersuite")
+            }
+        }
+    }
+
+    /// [`Ciphersuite::custom`] with the checks as an error instead of a panic.
+    pub const fn try_custom(
+        id: u16,
+        params: CiphersuiteParams,
+    ) -> Result<Self, CustomCiphersuiteError> {
+        match Self::check_custom_id(id) {
+            Ok(()) => Ok(Self::with_params(id, params)),
+            Err(e) => Err(e),
+        }
+    }
+
+    const fn with_params(id: u16, params: CiphersuiteParams) -> Self {
+        Self {
+            id,
+            kem: params.kem,
+            kdf: params.kdf,
+            aead: params.aead,
+            hash: params.hash,
+            signature: params.signature,
+        }
+    }
+
+    /// Position in `BUILTIN`, if this is a built-in ciphersuite.
+    fn index(&self) -> Option<usize> {
+        Self::BUILTIN.iter().position(|c| c.id == self.id)
+    }
+
+    fn name(&self) -> Option<&'static str> {
+        self.index().map(|i| Self::NAMES[i])
     }
 
     /// Get the [`HashType`] for this [`Ciphersuite`]
@@ -822,7 +1001,10 @@ impl Ord for Ciphersuite {
 
 impl core::fmt::Debug for Ciphersuite {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str(self.name())
+        match self.name() {
+            Some(name) => f.write_str(name),
+            None => write!(f, "Ciphersuite({:#06x})", self.id),
+        }
     }
 }
 
@@ -864,38 +1046,70 @@ impl TryFrom<u16> for Ciphersuite {
 // with the declaration index and the name. serde_json and ciborium store the
 // name, postcard stores the index, and stored data keeps deserializing.
 
+/// Serde representation of a custom ciphersuite, the payload of the `Custom`
+/// variant.
+#[derive(Serialize, Deserialize)]
+struct CustomCiphersuiteRepr {
+    id: u16,
+    params: CiphersuiteParams,
+}
+
+/// Variant index of `Custom`. Fixed, so that it does not move when the
+/// built-in table grows or shrinks with a feature, which would make postcard
+/// data written under one feature set misread under another.
+const CUSTOM_VARIANT_INDEX: u32 = 0xFFFF;
+
 impl Serialize for Ciphersuite {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let i = self.index();
-        serializer.serialize_unit_variant("Ciphersuite", i as u32, Self::NAMES[i])
+        match self.index() {
+            Some(i) => serializer.serialize_unit_variant("Ciphersuite", i as u32, Self::NAMES[i]),
+            None => serializer.serialize_newtype_variant(
+                "Ciphersuite",
+                CUSTOM_VARIANT_INDEX,
+                "Custom",
+                &CustomCiphersuiteRepr {
+                    id: self.id,
+                    params: self.params(),
+                },
+            ),
+        }
     }
 }
 
 impl<'de> Deserialize<'de> for Ciphersuite {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        struct Index(usize);
+        enum Variant {
+            Builtin(usize),
+            Custom,
+        }
 
-        struct IndexVisitor;
-        impl serde::de::Visitor<'_> for IndexVisitor {
-            type Value = Index;
+        struct VariantVisitor;
+        impl serde::de::Visitor<'_> for VariantVisitor {
+            type Value = Variant;
             fn expecting(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
                 f.write_str("a ciphersuite name or index")
             }
-            fn visit_u64<E: serde::de::Error>(self, v: u64) -> Result<Index, E> {
+            fn visit_u64<E: serde::de::Error>(self, v: u64) -> Result<Variant, E> {
+                if v == u64::from(CUSTOM_VARIANT_INDEX) {
+                    return Ok(Variant::Custom);
+                }
                 usize::try_from(v)
                     .ok()
                     .filter(|i| *i < Ciphersuite::NAMES.len())
-                    .map(Index)
+                    .map(Variant::Builtin)
                     .ok_or_else(|| E::invalid_value(serde::de::Unexpected::Unsigned(v), &self))
             }
-            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Index, E> {
+            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Variant, E> {
+                if v == "Custom" {
+                    return Ok(Variant::Custom);
+                }
                 Ciphersuite::NAMES
                     .iter()
                     .position(|n| *n == v)
-                    .map(Index)
+                    .map(Variant::Builtin)
                     .ok_or_else(|| E::unknown_variant(v, Ciphersuite::NAMES))
             }
-            fn visit_bytes<E: serde::de::Error>(self, v: &[u8]) -> Result<Index, E> {
+            fn visit_bytes<E: serde::de::Error>(self, v: &[u8]) -> Result<Variant, E> {
                 match core::str::from_utf8(v) {
                     Ok(s) => self.visit_str(s),
                     Err(_) => Err(E::invalid_value(serde::de::Unexpected::Bytes(v), &self)),
@@ -903,9 +1117,9 @@ impl<'de> Deserialize<'de> for Ciphersuite {
             }
         }
 
-        impl<'de> Deserialize<'de> for Index {
-            fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Index, D::Error> {
-                d.deserialize_identifier(IndexVisitor)
+        impl<'de> Deserialize<'de> for Variant {
+            fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Variant, D::Error> {
+                d.deserialize_identifier(VariantVisitor)
             }
         }
 
@@ -919,10 +1133,19 @@ impl<'de> Deserialize<'de> for Ciphersuite {
                 self,
                 data: A,
             ) -> Result<Ciphersuite, A::Error> {
-                use serde::de::VariantAccess;
-                let (Index(i), variant) = data.variant::<Index>()?;
-                variant.unit_variant()?;
-                Ok(Ciphersuite::BUILTIN[i])
+                use serde::de::{Error, VariantAccess};
+                match data.variant::<Variant>()? {
+                    (Variant::Builtin(i), variant) => {
+                        variant.unit_variant()?;
+                        Ok(Ciphersuite::BUILTIN[i])
+                    }
+                    (Variant::Custom, variant) => {
+                        let repr: CustomCiphersuiteRepr = variant.newtype_variant()?;
+                        Ciphersuite::try_custom(repr.id, repr.params).map_err(|e| {
+                            A::Error::custom(format!("invalid custom ciphersuite: {e}"))
+                        })
+                    }
+                }
             }
         }
 

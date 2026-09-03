@@ -11,7 +11,7 @@ use openmls::prelude::{
 };
 use openmls_basic_credential::SignatureKeyPair;
 use openmls_rust_crypto::OpenMlsRustCrypto;
-use openmls_traits::types::Ciphersuite;
+use openmls_traits::types::{Ciphersuite, VerifiableCiphersuite};
 
 // Helper function to create a test credential
 fn create_credential(identity: &[u8]) -> (CredentialWithKey, SignatureKeyPair) {
@@ -497,5 +497,14 @@ fn test_grease_ciphersuite_rejected_in_wire_position() {
     assert_eq!(&bytes[2..4], &[0x00, 0x01]);
     bytes[2..4].copy_from_slice(&[0x0A, 0x0A]);
 
-    assert!(KeyPackageIn::tls_deserialize_exact(bytes.as_slice()).is_err());
+    // The value parses, since the field only carries the code point, and is
+    // rejected as soon as the key package is validated.
+    let key_package_in = KeyPackageIn::tls_deserialize_exact(bytes.as_slice()).unwrap();
+    let err = key_package_in
+        .validate(provider.crypto(), ProtocolVersion::Mls10)
+        .unwrap_err();
+    assert_eq!(
+        err,
+        KeyPackageVerifyError::UnknownCiphersuite(VerifiableCiphersuite::new(0x0A0A))
+    );
 }

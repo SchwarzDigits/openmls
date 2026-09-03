@@ -196,7 +196,7 @@ impl From<MlsMessageBodyOut> for MlsMessageBodyIn {
             MlsMessageBodyOut::PrivateMessage(pm) => MlsMessageBodyIn::PrivateMessage(pm.into()),
             MlsMessageBodyOut::Welcome(w) => MlsMessageBodyIn::Welcome(w),
             MlsMessageBodyOut::GroupInfo(gi) => {
-                MlsMessageBodyIn::GroupInfo(gi.into_verifiable_group_info())
+                MlsMessageBodyIn::GroupInfo(gi.into_verifiable_group_info().into())
             }
             MlsMessageBodyOut::KeyPackage(kp) => MlsMessageBodyIn::KeyPackage(kp.into()),
             #[cfg(feature = "targeted-messages-draft")]
