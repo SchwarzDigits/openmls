@@ -6,132 +6,379 @@ use std::ops::Deref;
 
 use serde::{Deserialize, Serialize};
 use tls_codec::{
-    SecretVLBytes, TlsDeserialize, TlsDeserializeBytes, TlsSerialize, TlsSerializeBytes, TlsSize,
-    VLBytes,
+    SecretVLBytes, TlsDeserialize, TlsDeserializeBytes, TlsSerialize, TlsSize, VLBytes,
 };
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
-#[repr(u16)]
-/// AEAD types
-pub enum AeadType {
-    /// AES GCM 128
-    Aes128Gcm = 0x0001,
-
-    /// AES GCM 256
-    Aes256Gcm = 0x0002,
-
-    /// ChaCha20 Poly1305
-    ChaCha20Poly1305 = 0x0003,
+/// AEAD for MLS messages, as a code point openmls passes to the crypto
+/// provider, together with the key and tag size, which openmls needs itself.
+/// The nonce size is not part of the value: openmls derives 12-byte nonces,
+/// as every AEAD in RFC 9420 uses. The built-in values are the HPKE AEAD
+/// identifiers, RFC 9180, Section 11.3, and
+/// [`Ciphersuite::hpke_aead_algorithm`] is the same code point; `0xFFFF` is
+/// HPKE's export-only mode there and not an AEAD for messages. For an AEAD
+/// the crypto provider brings, [`AeadType::new`] makes one for any other code
+/// point.
+#[derive(PartialEq, Eq, Clone, Copy, Hash)]
+pub struct AeadType {
+    id: u16,
+    key_size: u8,
+    tag_size: u8,
 }
 
+#[allow(non_upper_case_globals)]
 impl AeadType {
+    /// AES GCM 128
+    pub const Aes128Gcm: Self = Self::new(0x0001, 16, 16);
+
+    /// AES GCM 256
+    pub const Aes256Gcm: Self = Self::new(0x0002, 32, 16);
+
+    /// ChaCha20 Poly1305
+    pub const ChaCha20Poly1305: Self = Self::new(0x0003, 32, 16);
+
+    /// The built-in values in the declaration order of the former enum, which
+    /// the serde encoding depends on.
+    const BUILTIN: &'static [Self] = &[Self::Aes128Gcm, Self::Aes256Gcm, Self::ChaCha20Poly1305];
+    const NAMES: &'static [&'static str] = &["Aes128Gcm", "Aes256Gcm", "ChaCha20Poly1305"];
+
+    /// An AEAD by code point with its key and tag size in bytes. Whether the
+    /// crypto provider can use it is up to the provider.
+    pub const fn new(id: u16, key_size: u8, tag_size: u8) -> Self {
+        Self {
+            id,
+            key_size,
+            tag_size,
+        }
+    }
+
+    /// The code point.
+    pub const fn id(self) -> u16 {
+        self.id
+    }
+
     /// Get the tag size of the [`AeadType`] in bytes.
     pub const fn tag_size(&self) -> usize {
-        match self {
-            AeadType::Aes128Gcm => 16,
-            AeadType::Aes256Gcm => 16,
-            AeadType::ChaCha20Poly1305 => 16,
-        }
+        self.tag_size as usize
     }
 
     /// Get the key size of the [`AeadType`] in bytes.
     pub const fn key_size(&self) -> usize {
-        match self {
-            AeadType::Aes128Gcm => 16,
-            AeadType::Aes256Gcm => 32,
-            AeadType::ChaCha20Poly1305 => 32,
-        }
+        self.key_size as usize
     }
 
-    /// Get the nonce size of the [`AeadType`] in bytes.
+    /// Get the nonce size of the [`AeadType`] in bytes. openmls uses 12-byte
+    /// nonces for every AEAD.
     pub const fn nonce_size(&self) -> usize {
-        match self {
-            AeadType::Aes128Gcm | AeadType::Aes256Gcm | AeadType::ChaCha20Poly1305 => 12,
+        12
+    }
+
+    fn index(self) -> Option<usize> {
+        Self::BUILTIN.iter().position(|b| *b == self)
+    }
+}
+
+const _: () = assert!(AeadType::BUILTIN.len() == AeadType::NAMES.len());
+
+impl core::fmt::Debug for AeadType {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self.index() {
+            Some(i) => f.write_str(Self::NAMES[i]),
+            None => write!(f, "AeadType({:#06x})", self.id),
         }
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
-#[repr(u8)]
-#[allow(non_camel_case_types)]
-/// Hash types
-pub enum HashType {
-    Sha2_256 = 0x04,
-    Sha2_384 = 0x05,
-    Sha2_512 = 0x06,
+/// The serde encoding of an [`AeadType`] that is not built in.
+#[derive(Serialize, Deserialize)]
+struct CustomAeadRepr {
+    id: u16,
+    key_size: u8,
+    tag_size: u8,
 }
 
+impl Serialize for AeadType {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self.index() {
+            Some(i) => serializer.serialize_unit_variant("AeadType", i as u32, Self::NAMES[i]),
+            None => serializer.serialize_newtype_variant(
+                "AeadType",
+                CUSTOM_VARIANT_INDEX,
+                "Custom",
+                &CustomAeadRepr {
+                    id: self.id,
+                    key_size: self.key_size,
+                    tag_size: self.tag_size,
+                },
+            ),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for AeadType {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct AeadVisitor;
+        impl<'de> serde::de::Visitor<'de> for AeadVisitor {
+            type Value = AeadType;
+            fn expecting(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+                f.write_str("enum AeadType")
+            }
+            fn visit_enum<A: serde::de::EnumAccess<'de>>(
+                self,
+                data: A,
+            ) -> Result<AeadType, A::Error> {
+                use serde::de::VariantAccess;
+                match data.variant_seed(VariantSeed(AeadType::NAMES))? {
+                    (Variant::Builtin(i), variant) => {
+                        variant.unit_variant()?;
+                        Ok(AeadType::BUILTIN[i])
+                    }
+                    (Variant::Custom, variant) => {
+                        let repr: CustomAeadRepr = variant.newtype_variant()?;
+                        Ok(AeadType::new(repr.id, repr.key_size, repr.tag_size))
+                    }
+                }
+            }
+        }
+
+        deserializer.deserialize_enum("AeadType", Self::NAMES, AeadVisitor)
+    }
+}
+
+/// Hash function, as a code point openmls passes to the crypto provider,
+/// together with its output size, which openmls needs itself. The built-in
+/// values are the TLS `HashAlgorithm` identifiers; for a hash the crypto
+/// provider defines, the code point is a convention between the provider and
+/// the ciphersuite that uses it.
+#[derive(PartialEq, Eq, Copy, Clone, Hash, Serialize, Deserialize)]
+pub struct HashType {
+    id: u16,
+    size: u8,
+}
+
+#[allow(non_upper_case_globals)]
 impl HashType {
+    /// SHA2-256
+    pub const Sha2_256: Self = Self { id: 0x04, size: 32 };
+
+    /// SHA2-384
+    pub const Sha2_384: Self = Self { id: 0x05, size: 48 };
+
+    /// SHA2-512
+    pub const Sha2_512: Self = Self { id: 0x06, size: 64 };
+
+    /// A hash function by code point, with its output size in bytes. Whether
+    /// the crypto provider can use it is up to the provider.
+    pub const fn new(id: u16, size: u8) -> Self {
+        Self { id, size }
+    }
+
+    /// The code point.
+    pub const fn id(self) -> u16 {
+        self.id
+    }
+
     /// Returns the output size of a hash by [`HashType`].
     #[inline]
     pub const fn size(&self) -> usize {
-        match self {
-            HashType::Sha2_256 => 32,
-            HashType::Sha2_384 => 48,
-            HashType::Sha2_512 => 64,
+        self.size as usize
+    }
+
+    /// The built-in values with the names they had as enum variants.
+    const BUILTIN: &'static [(Self, &'static str)] = &[
+        (Self::Sha2_256, "Sha2_256"),
+        (Self::Sha2_384, "Sha2_384"),
+        (Self::Sha2_512, "Sha2_512"),
+    ];
+
+    fn name(self) -> Option<&'static str> {
+        Self::BUILTIN
+            .iter()
+            .find(|(builtin, _)| *builtin == self)
+            .map(|(_, name)| *name)
+    }
+}
+
+impl core::fmt::Debug for HashType {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self.name() {
+            Some(name) => f.write_str(name),
+            None => write!(f, "HashType({:#06x})", self.id),
         }
     }
 }
 
-/// SignatureScheme according to IANA TLS parameters
-#[allow(non_camel_case_types)]
-#[allow(clippy::upper_case_acronyms)]
-#[derive(
-    Copy,
-    Hash,
-    Eq,
-    PartialEq,
-    Clone,
-    Debug,
-    Serialize,
-    Deserialize,
-    TlsSerialize,
-    TlsSerializeBytes,
-    TlsDeserialize,
-    TlsDeserializeBytes,
-    TlsSize,
-)]
-#[repr(u16)]
-pub enum SignatureScheme {
+/// Signature scheme, as a code point openmls passes to the crypto provider.
+/// The built-in values are the IANA TLS `SignatureScheme` identifiers. For a
+/// scheme the crypto provider brings, [`SignatureScheme::new`] makes one for
+/// any code point; `TryFrom<u16>` only knows the built-in ones.
+#[derive(Copy, Hash, Eq, PartialEq, Clone)]
+pub struct SignatureScheme {
+    id: u16,
+}
+
+impl SignatureScheme {
     /// ECDSA_SECP256R1_SHA256
-    ECDSA_SECP256R1_SHA256 = 0x0403,
+    pub const ECDSA_SECP256R1_SHA256: Self = Self::new(0x0403);
     /// ECDSA_SECP384R1_SHA384
-    ECDSA_SECP384R1_SHA384 = 0x0503,
+    pub const ECDSA_SECP384R1_SHA384: Self = Self::new(0x0503);
     /// ECDSA_SECP521R1_SHA512
-    ECDSA_SECP521R1_SHA512 = 0x0603,
+    pub const ECDSA_SECP521R1_SHA512: Self = Self::new(0x0603);
     /// ED25519
-    ED25519 = 0x0807,
+    pub const ED25519: Self = Self::new(0x0807);
     /// ED448
-    ED448 = 0x0808,
+    pub const ED448: Self = Self::new(0x0808);
     /// ML-DSA44
     #[cfg(feature = "draft-ietf-mls-pq-ciphersuites")]
-    MLDSA44 = 0x0904,
+    pub const MLDSA44: Self = Self::new(0x0904);
     /// ML-DSA65
     #[cfg(feature = "draft-ietf-mls-pq-ciphersuites")]
-    MLDSA65 = 0x0905,
+    pub const MLDSA65: Self = Self::new(0x0905);
     /// ML-DSA87
     #[cfg(feature = "draft-ietf-mls-pq-ciphersuites")]
-    MLDSA87 = 0x0906,
+    pub const MLDSA87: Self = Self::new(0x0906);
+
+    /// The built-in values in the declaration order of the former enum, which
+    /// the serde encoding depends on.
+    const BUILTIN: &'static [Self] = &[
+        Self::ECDSA_SECP256R1_SHA256,
+        Self::ECDSA_SECP384R1_SHA384,
+        Self::ECDSA_SECP521R1_SHA512,
+        Self::ED25519,
+        Self::ED448,
+        #[cfg(feature = "draft-ietf-mls-pq-ciphersuites")]
+        Self::MLDSA44,
+        #[cfg(feature = "draft-ietf-mls-pq-ciphersuites")]
+        Self::MLDSA65,
+        #[cfg(feature = "draft-ietf-mls-pq-ciphersuites")]
+        Self::MLDSA87,
+    ];
+    const NAMES: &'static [&'static str] = &[
+        "ECDSA_SECP256R1_SHA256",
+        "ECDSA_SECP384R1_SHA384",
+        "ECDSA_SECP521R1_SHA512",
+        "ED25519",
+        "ED448",
+        #[cfg(feature = "draft-ietf-mls-pq-ciphersuites")]
+        "MLDSA44",
+        #[cfg(feature = "draft-ietf-mls-pq-ciphersuites")]
+        "MLDSA65",
+        #[cfg(feature = "draft-ietf-mls-pq-ciphersuites")]
+        "MLDSA87",
+    ];
+
+    /// A signature scheme by code point. Whether the crypto provider can use
+    /// it is up to the provider.
+    pub const fn new(id: u16) -> Self {
+        Self { id }
+    }
+
+    /// The code point.
+    pub const fn id(self) -> u16 {
+        self.id
+    }
+
+    fn index(self) -> Option<usize> {
+        Self::BUILTIN.iter().position(|b| *b == self)
+    }
 }
+
+const _: () = assert!(SignatureScheme::BUILTIN.len() == SignatureScheme::NAMES.len());
 
 impl TryFrom<u16> for SignatureScheme {
     type Error = String;
 
+    /// The built-in signature schemes by code point.
     fn try_from(value: u16) -> Result<Self, Self::Error> {
-        match value {
-            0x0403 => Ok(SignatureScheme::ECDSA_SECP256R1_SHA256),
-            0x0503 => Ok(SignatureScheme::ECDSA_SECP384R1_SHA384),
-            0x0603 => Ok(SignatureScheme::ECDSA_SECP521R1_SHA512),
-            0x0807 => Ok(SignatureScheme::ED25519),
-            0x0808 => Ok(SignatureScheme::ED448),
-            #[cfg(feature = "draft-ietf-mls-pq-ciphersuites")]
-            0x0904 => Ok(SignatureScheme::MLDSA44),
-            #[cfg(feature = "draft-ietf-mls-pq-ciphersuites")]
-            0x0905 => Ok(SignatureScheme::MLDSA65),
-            #[cfg(feature = "draft-ietf-mls-pq-ciphersuites")]
-            0x0906 => Ok(SignatureScheme::MLDSA87),
-            _ => Err(format!("Unsupported SignatureScheme: {value}")),
+        let scheme = Self::new(value);
+        match scheme.index() {
+            Some(_) => Ok(scheme),
+            None => Err(format!("Unsupported SignatureScheme: {value}")),
         }
+    }
+}
+
+impl core::fmt::Debug for SignatureScheme {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self.index() {
+            Some(i) => f.write_str(Self::NAMES[i]),
+            None => write!(f, "SignatureScheme({:#06x})", self.id),
+        }
+    }
+}
+
+impl Serialize for SignatureScheme {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self.index() {
+            Some(i) => {
+                serializer.serialize_unit_variant("SignatureScheme", i as u32, Self::NAMES[i])
+            }
+            None => serializer.serialize_newtype_variant(
+                "SignatureScheme",
+                CUSTOM_VARIANT_INDEX,
+                "Custom",
+                &self.id,
+            ),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for SignatureScheme {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct SchemeVisitor;
+        impl<'de> serde::de::Visitor<'de> for SchemeVisitor {
+            type Value = SignatureScheme;
+            fn expecting(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+                f.write_str("enum SignatureScheme")
+            }
+            fn visit_enum<A: serde::de::EnumAccess<'de>>(
+                self,
+                data: A,
+            ) -> Result<SignatureScheme, A::Error> {
+                use serde::de::VariantAccess;
+                match data.variant_seed(VariantSeed(SignatureScheme::NAMES))? {
+                    (Variant::Builtin(i), variant) => {
+                        variant.unit_variant()?;
+                        Ok(SignatureScheme::BUILTIN[i])
+                    }
+                    (Variant::Custom, variant) => {
+                        Ok(SignatureScheme::new(variant.newtype_variant()?))
+                    }
+                }
+            }
+        }
+
+        deserializer.deserialize_enum("SignatureScheme", Self::NAMES, SchemeVisitor)
+    }
+}
+
+impl tls_codec::Size for SignatureScheme {
+    fn tls_serialized_len(&self) -> usize {
+        self.id.tls_serialized_len()
+    }
+}
+
+impl tls_codec::Serialize for SignatureScheme {
+    fn tls_serialize<W: std::io::Write>(&self, writer: &mut W) -> Result<usize, tls_codec::Error> {
+        self.id.tls_serialize(writer)
+    }
+}
+
+impl tls_codec::SerializeBytes for SignatureScheme {
+    fn tls_serialize_bytes(&self) -> Result<Vec<u8>, tls_codec::Error> {
+        tls_codec::SerializeBytes::tls_serialize_bytes(&self.id)
+    }
+}
+
+impl tls_codec::Deserialize for SignatureScheme {
+    fn tls_deserialize<R: std::io::Read>(bytes: &mut R) -> Result<Self, tls_codec::Error> {
+        Ok(Self::new(u16::tls_deserialize(bytes)?))
+    }
+}
+
+impl tls_codec::DeserializeBytes for SignatureScheme {
+    fn tls_deserialize_bytes(bytes: &[u8]) -> Result<(Self, &[u8]), tls_codec::Error> {
+        let (id, rest) = u16::tls_deserialize_bytes(bytes)?;
+        Ok((Self::new(id), rest))
     }
 }
 
@@ -158,6 +405,7 @@ pub enum CryptoError {
     ReceiverSetupError,
     ExporterError,
     UnsupportedCiphersuite,
+    UnsupportedKem,
     TlsSerializationError,
     TooMuchData,
     SigningError,
@@ -178,67 +426,199 @@ impl std::error::Error for CryptoError {}
 #[derive(Debug)]
 pub struct HpkeConfig(pub HpkeKemType, pub HpkeKdfType, pub HpkeAeadType);
 
-/// KEM Types for HPKE
-#[derive(PartialEq, Eq, Copy, Clone, Debug, Serialize, Deserialize)]
-#[repr(u16)]
-pub enum HpkeKemType {
+/// KEM identifier for HPKE. The classical ones are registered in RFC 9180,
+/// Section 11.1, the post-quantum ones come from draft-ietf-hpke-pq.
+///
+/// The code point goes into HPKE's `suite_id` and with that into every key
+/// derivation, so it has to be the one the peer uses as well. The built-in
+/// KEMs are associated constants. A crypto provider can accept further ones
+/// through [`HpkeKemType::new`]; whether a code point can be used is up to the
+/// provider, there is no reserved range to check it against.
+#[derive(PartialEq, Eq, Copy, Clone, Hash, Serialize, Deserialize)]
+pub struct HpkeKemType {
+    id: u16,
+}
+
+#[allow(non_upper_case_globals)]
+impl HpkeKemType {
     /// DH KEM on P256
-    DhKemP256 = 0x0010,
+    pub const DhKemP256: Self = Self { id: 0x0010 };
 
     /// DH KEM on P384
-    DhKemP384 = 0x0011,
+    pub const DhKemP384: Self = Self { id: 0x0011 };
 
     /// DH KEM on P521
-    DhKemP521 = 0x0012,
+    pub const DhKemP521: Self = Self { id: 0x0012 };
 
     /// DH KEM on x25519
-    DhKem25519 = 0x0020,
+    pub const DhKem25519: Self = Self { id: 0x0020 };
 
     /// DH KEM on x448
-    DhKem448 = 0x0021,
+    pub const DhKem448: Self = Self { id: 0x0021 };
 
     /// ML-KEM-768
     #[cfg(feature = "draft-ietf-mls-pq-ciphersuites")]
-    MlKem768 = 0x0041,
+    pub const MlKem768: Self = Self { id: 0x0041 };
 
     /// ML-KEM-1024
     #[cfg(feature = "draft-ietf-mls-pq-ciphersuites")]
-    MlKem1024 = 0x0042,
+    pub const MlKem1024: Self = Self { id: 0x0042 };
 
     /// XWing combiner for ML-KEM and X25519
     #[cfg(feature = "draft-ietf-mls-pq-ciphersuites")]
-    XWingKemDraft6 = 0x004D,
+    pub const XWingKemDraft6: Self = Self { id: 0x004D };
+
+    /// A KEM by code point. Whether the crypto provider can use it is up to the
+    /// provider.
+    pub const fn new(id: u16) -> Self {
+        Self { id }
+    }
+
+    /// The code point.
+    pub const fn id(self) -> u16 {
+        self.id
+    }
+
+    /// The built-in values with the names they had as enum variants.
+    const BUILTIN: &'static [(Self, &'static str)] = &[
+        (Self::DhKemP256, "DhKemP256"),
+        (Self::DhKemP384, "DhKemP384"),
+        (Self::DhKemP521, "DhKemP521"),
+        (Self::DhKem25519, "DhKem25519"),
+        (Self::DhKem448, "DhKem448"),
+        #[cfg(feature = "draft-ietf-mls-pq-ciphersuites")]
+        (Self::MlKem768, "MlKem768"),
+        #[cfg(feature = "draft-ietf-mls-pq-ciphersuites")]
+        (Self::MlKem1024, "MlKem1024"),
+        #[cfg(feature = "draft-ietf-mls-pq-ciphersuites")]
+        (Self::XWingKemDraft6, "XWingKemDraft6"),
+    ];
+
+    fn name(self) -> Option<&'static str> {
+        Self::BUILTIN
+            .iter()
+            .find(|(builtin, _)| *builtin == self)
+            .map(|(_, name)| *name)
+    }
 }
 
-/// KDF Types for HPKE
-#[derive(PartialEq, Eq, Copy, Clone, Debug, Serialize, Deserialize)]
-#[repr(u16)]
-pub enum HpkeKdfType {
+impl core::fmt::Debug for HpkeKemType {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self.name() {
+            Some(name) => f.write_str(name),
+            None => write!(f, "HpkeKemType({:#06x})", self.id),
+        }
+    }
+}
+
+/// KDF identifier for HPKE, RFC 9180, Section 11.2. openmls only passes it to
+/// the crypto provider; [`HpkeKdfType::new`] makes one for any code point.
+#[derive(PartialEq, Eq, Copy, Clone, Hash, Serialize, Deserialize)]
+pub struct HpkeKdfType {
+    id: u16,
+}
+
+#[allow(non_upper_case_globals)]
+impl HpkeKdfType {
     /// HKDF SHA 256
-    HkdfSha256 = 0x0001,
+    pub const HkdfSha256: Self = Self { id: 0x0001 };
 
     /// HKDF SHA 384
-    HkdfSha384 = 0x0002,
+    pub const HkdfSha384: Self = Self { id: 0x0002 };
 
     /// HKDF SHA 512
-    HkdfSha512 = 0x0003,
+    pub const HkdfSha512: Self = Self { id: 0x0003 };
+
+    /// A KDF by code point. Whether the crypto provider can use it is up to
+    /// the provider.
+    pub const fn new(id: u16) -> Self {
+        Self { id }
+    }
+
+    /// The code point.
+    pub const fn id(self) -> u16 {
+        self.id
+    }
+
+    /// The built-in values with the names they had as enum variants.
+    const BUILTIN: &'static [(Self, &'static str)] = &[
+        (Self::HkdfSha256, "HkdfSha256"),
+        (Self::HkdfSha384, "HkdfSha384"),
+        (Self::HkdfSha512, "HkdfSha512"),
+    ];
+
+    fn name(self) -> Option<&'static str> {
+        Self::BUILTIN
+            .iter()
+            .find(|(builtin, _)| *builtin == self)
+            .map(|(_, name)| *name)
+    }
 }
 
-/// AEAD Types for HPKE.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[repr(u16)]
-pub enum HpkeAeadType {
+impl core::fmt::Debug for HpkeKdfType {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self.name() {
+            Some(name) => f.write_str(name),
+            None => write!(f, "HpkeKdfType({:#06x})", self.id),
+        }
+    }
+}
+
+/// AEAD identifier for HPKE, RFC 9180, Section 11.3. openmls only passes it
+/// to the crypto provider; [`HpkeAeadType::new`] makes one for any code point.
+#[derive(PartialEq, Eq, Copy, Clone, Hash, Serialize, Deserialize)]
+pub struct HpkeAeadType {
+    id: u16,
+}
+
+#[allow(non_upper_case_globals)]
+impl HpkeAeadType {
     /// AES GCM 128
-    AesGcm128 = 0x0001,
+    pub const AesGcm128: Self = Self { id: 0x0001 };
 
     /// AES GCM 256
-    AesGcm256 = 0x0002,
+    pub const AesGcm256: Self = Self { id: 0x0002 };
 
     /// ChaCha20 Poly1305
-    ChaCha20Poly1305 = 0x0003,
+    pub const ChaCha20Poly1305: Self = Self { id: 0x0003 };
 
     /// Export-only
-    Export = 0xFFFF,
+    pub const Export: Self = Self { id: 0xFFFF };
+
+    /// An AEAD by code point. Whether the crypto provider can use it is up to
+    /// the provider.
+    pub const fn new(id: u16) -> Self {
+        Self { id }
+    }
+
+    /// The code point.
+    pub const fn id(self) -> u16 {
+        self.id
+    }
+
+    /// The built-in values with the names they had as enum variants.
+    const BUILTIN: &'static [(Self, &'static str)] = &[
+        (Self::AesGcm128, "AesGcm128"),
+        (Self::AesGcm256, "AesGcm256"),
+        (Self::ChaCha20Poly1305, "ChaCha20Poly1305"),
+        (Self::Export, "Export"),
+    ];
+
+    fn name(self) -> Option<&'static str> {
+        Self::BUILTIN
+            .iter()
+            .find(|(builtin, _)| *builtin == self)
+            .map(|(_, name)| *name)
+    }
+}
+
+impl core::fmt::Debug for HpkeAeadType {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self.name() {
+            Some(name) => f.write_str(name),
+            None => write!(f, "HpkeAeadType({:#06x})", self.id),
+        }
+    }
 }
 
 /// 7.7. Update Paths
@@ -929,11 +1309,7 @@ impl Ciphersuite {
     /// Get the [`HpkeAeadType`] for this [`Ciphersuite`].
     #[inline]
     pub const fn hpke_aead_algorithm(&self) -> HpkeAeadType {
-        match self.aead {
-            AeadType::Aes128Gcm => HpkeAeadType::AesGcm128,
-            AeadType::Aes256Gcm => HpkeAeadType::AesGcm256,
-            AeadType::ChaCha20Poly1305 => HpkeAeadType::ChaCha20Poly1305,
-        }
+        HpkeAeadType::new(self.aead.id())
     }
 
     /// Get the [`HpkeConfig`] for this [`Ciphersuite`].
@@ -1054,10 +1430,64 @@ struct CustomCiphersuiteRepr {
     params: CiphersuiteParams,
 }
 
-/// Variant index of `Custom`. Fixed, so that it does not move when the
-/// built-in table grows or shrinks with a feature, which would make postcard
-/// data written under one feature set misread under another.
+/// Variant index of `Custom` in the serde encoding of [`Ciphersuite`],
+/// [`AeadType`] and [`SignatureScheme`]. Fixed, so that it does not move when
+/// a built-in table grows or shrinks with a feature, which would make
+/// postcard data written under one feature set misread under another.
 const CUSTOM_VARIANT_INDEX: u32 = 0xFFFF;
+
+/// A variant in that encoding: a built-in value by declaration index, or
+/// `Custom`.
+enum Variant {
+    Builtin(usize),
+    Custom,
+}
+
+/// Reads a [`Variant`] against the name table of a type.
+struct VariantSeed(&'static [&'static str]);
+
+impl<'de> serde::de::DeserializeSeed<'de> for VariantSeed {
+    type Value = Variant;
+    fn deserialize<D: serde::Deserializer<'de>>(
+        self,
+        deserializer: D,
+    ) -> Result<Variant, D::Error> {
+        deserializer.deserialize_identifier(self)
+    }
+}
+
+impl serde::de::Visitor<'_> for VariantSeed {
+    type Value = Variant;
+    fn expecting(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        f.write_str("a variant name or index")
+    }
+    fn visit_u64<E: serde::de::Error>(self, v: u64) -> Result<Variant, E> {
+        if v == u64::from(CUSTOM_VARIANT_INDEX) {
+            return Ok(Variant::Custom);
+        }
+        usize::try_from(v)
+            .ok()
+            .filter(|i| *i < self.0.len())
+            .map(Variant::Builtin)
+            .ok_or_else(|| E::invalid_value(serde::de::Unexpected::Unsigned(v), &self))
+    }
+    fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Variant, E> {
+        if v == "Custom" {
+            return Ok(Variant::Custom);
+        }
+        self.0
+            .iter()
+            .position(|n| *n == v)
+            .map(Variant::Builtin)
+            .ok_or_else(|| E::unknown_variant(v, self.0))
+    }
+    fn visit_bytes<E: serde::de::Error>(self, v: &[u8]) -> Result<Variant, E> {
+        match core::str::from_utf8(v) {
+            Ok(s) => self.visit_str(s),
+            Err(_) => Err(E::invalid_value(serde::de::Unexpected::Bytes(v), &self)),
+        }
+    }
+}
 
 impl Serialize for Ciphersuite {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
@@ -1078,51 +1508,6 @@ impl Serialize for Ciphersuite {
 
 impl<'de> Deserialize<'de> for Ciphersuite {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        enum Variant {
-            Builtin(usize),
-            Custom,
-        }
-
-        struct VariantVisitor;
-        impl serde::de::Visitor<'_> for VariantVisitor {
-            type Value = Variant;
-            fn expecting(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
-                f.write_str("a ciphersuite name or index")
-            }
-            fn visit_u64<E: serde::de::Error>(self, v: u64) -> Result<Variant, E> {
-                if v == u64::from(CUSTOM_VARIANT_INDEX) {
-                    return Ok(Variant::Custom);
-                }
-                usize::try_from(v)
-                    .ok()
-                    .filter(|i| *i < Ciphersuite::NAMES.len())
-                    .map(Variant::Builtin)
-                    .ok_or_else(|| E::invalid_value(serde::de::Unexpected::Unsigned(v), &self))
-            }
-            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Variant, E> {
-                if v == "Custom" {
-                    return Ok(Variant::Custom);
-                }
-                Ciphersuite::NAMES
-                    .iter()
-                    .position(|n| *n == v)
-                    .map(Variant::Builtin)
-                    .ok_or_else(|| E::unknown_variant(v, Ciphersuite::NAMES))
-            }
-            fn visit_bytes<E: serde::de::Error>(self, v: &[u8]) -> Result<Variant, E> {
-                match core::str::from_utf8(v) {
-                    Ok(s) => self.visit_str(s),
-                    Err(_) => Err(E::invalid_value(serde::de::Unexpected::Bytes(v), &self)),
-                }
-            }
-        }
-
-        impl<'de> Deserialize<'de> for Variant {
-            fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Variant, D::Error> {
-                d.deserialize_identifier(VariantVisitor)
-            }
-        }
-
         struct CiphersuiteVisitor;
         impl<'de> serde::de::Visitor<'de> for CiphersuiteVisitor {
             type Value = Ciphersuite;
@@ -1134,7 +1519,7 @@ impl<'de> Deserialize<'de> for Ciphersuite {
                 data: A,
             ) -> Result<Ciphersuite, A::Error> {
                 use serde::de::{Error, VariantAccess};
-                match data.variant::<Variant>()? {
+                match data.variant_seed(VariantSeed(Ciphersuite::NAMES))? {
                     (Variant::Builtin(i), variant) => {
                         variant.unit_variant()?;
                         Ok(Ciphersuite::BUILTIN[i])
