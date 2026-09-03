@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- [#PRNUM](https://github.com/openmls/openmls/pull/PRNUM): `Ciphersuite` is a struct instead of an enum. Its identity is the code point; the parameters (KEM, KDF, AEAD, hash, signature scheme) are carried in the value, so the accessors are unchanged and still `const`. The variants are associated constants with the same names, so `Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519` keeps working, and `Ciphersuite::id()` returns the code point. The TLS, serde_json, postcard and ciborium encodings are unchanged, stored data keeps loading.
+- [#PRNUM](https://github.com/openmls/openmls/pull/PRNUM): Three things no longer compile with `Ciphersuite` as a struct: `ciphersuite as u16` (use `u16::from`), matching on the constants (compare with `==`), and exhaustive matches over all ciphersuites.
 - [#2202](https://github.com/openmls/openmls/pull/2202): The secret export functions on `MlsGroup`, `StagedCommit`, `StagedWelcome`, `ProcessedWelcome` and `ProcessedMessage` now return `ExportedSecret<T>` instead of `Vec<u8>`. The new type zeroizes the secret on drop and is parameterized with a marker struct recording which function produced the secret. Use `as_slice()` to access the secret bytes.
 
 ### Fixed

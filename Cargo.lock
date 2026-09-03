@@ -2657,7 +2657,10 @@ dependencies = [
 name = "openmls_traits"
 version = "0.6.0"
 dependencies = [
+ "ciborium",
+ "postcard",
  "serde",
+ "serde_json",
  "tls_codec",
 ]
 
