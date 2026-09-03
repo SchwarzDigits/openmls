@@ -150,17 +150,9 @@ pub(crate) fn aead_key_gen(
     alg: openmls_traits::types::AeadType,
     rng: &impl OpenMlsRand,
 ) -> SecretVLBytes {
-    match alg {
-        openmls_traits::types::AeadType::Aes128Gcm => rng
-            .random_vec(16)
-            .expect("An unexpected error occurred.")
-            .into(),
-        openmls_traits::types::AeadType::Aes256Gcm
-        | openmls_traits::types::AeadType::ChaCha20Poly1305 => rng
-            .random_vec(32)
-            .expect("An unexpected error occurred.")
-            .into(),
-    }
+    rng.random_vec(alg.key_size())
+        .expect("An unexpected error occurred.")
+        .into()
 }
 
 #[cfg(test)]

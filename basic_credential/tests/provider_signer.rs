@@ -14,7 +14,7 @@ fn schemes(crypto: &impl OpenMlsCrypto) -> Vec<SignatureScheme> {
         .into_iter()
         .map(|cs| cs.signature_algorithm())
         .collect();
-    schemes.sort_by_key(|s| *s as u16);
+    schemes.sort_by_key(|s| s.id());
     schemes.dedup();
     schemes
 }
