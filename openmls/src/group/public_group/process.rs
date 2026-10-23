@@ -127,7 +127,10 @@ impl PublicGroup {
 
     /// This function is used to parse messages from the DS. It checks for
     /// syntactic errors and does semantic validation as well. It returns a
-    /// [ProcessedMessage] enum. Checks the following semantic validation:
+    /// [ProcessedMessage] enum. Verifying the confirmation tag of a commit
+    /// requires the epoch secrets and is done by
+    /// [`MlsGroup::process_message()`](crate::group::MlsGroup::process_message).
+    /// Checks the following semantic validation:
     ///  - ValSem002
     ///  - ValSem003
     ///  - ValSem004
@@ -149,10 +152,6 @@ impl PublicGroup {
     ///  - ValSem200
     ///  - ValSem201
     ///  - ValSem202: Path must be the right length
-    ///  - ValSem203: Path secrets must decrypt correctly
-    ///  - ValSem204: Public keys from Path must be verified and match the
-    ///    private keys from the direct path
-    ///  - ValSem205
     ///  - ValSem240
     ///  - ValSem241
     ///  - ValSem242
@@ -295,10 +294,6 @@ impl PublicGroup {
     ///  - ValSem200
     ///  - ValSem201
     ///  - ValSem202: Path must be the right length
-    ///  - ValSem203: Path secrets must decrypt correctly
-    ///  - ValSem204: Public keys from Path must be verified and match the
-    ///    private keys from the direct path
-    ///  - ValSem205
     ///  - ValSem240
     ///  - ValSem241
     ///  - ValSem242

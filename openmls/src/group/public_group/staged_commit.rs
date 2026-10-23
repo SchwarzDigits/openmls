@@ -304,9 +304,7 @@ impl PublicGroup {
     ///  - Applies the proposals covered by the commit to the tree
     ///  - Applies the (optional) update path to the tree
     ///  - Updates the [`GroupContext`]
-    ///  - Decrypts and derives the path secrets
-    ///  - Initializes the key schedule for epoch rollover
-    ///  - Verifies the confirmation tag
+    ///  - Adds the received confirmation tag to the interim transcript hash
     ///
     /// Returns a [`StagedCommit`] that can be inspected and later merged into
     /// the group state either with [`MlsGroup::merge_commit()`] or
@@ -324,10 +322,6 @@ impl PublicGroup {
     ///  - ValSem200
     ///  - ValSem201
     ///  - ValSem202: Path must be the right length
-    ///  - ValSem203: Path secrets must decrypt correctly
-    ///  - ValSem204: Public keys from Path must be verified and match the
-    ///    private keys from the direct path
-    ///  - ValSem205
     ///  - ValSem240
     ///  - ValSem241
     ///  - ValSem242
@@ -472,8 +466,7 @@ impl PublicGroup {
             .confirmation_tag()
             .ok_or(StageCommitError::ConfirmationTagMissing)?;
 
-        // If we have private key material, derive the secrets for the next
-        // epoch and check the confirmation tag.
+        // Update the interim transcript hash with the received confirmation tag.
         diff.update_interim_transcript_hash(
             ciphersuite,
             crypto,
