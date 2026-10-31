@@ -11,10 +11,17 @@ repository = "https://github.com/openmls/openmls/tree/main/sqlite_storage"
 readme = "README.md"
 
 [dependencies]
-openmls_traits = { workspace = true }
+# SchwarzDigits fork (branch sqlite3mc/sqlite_storage-0.3, consumed as a git
+# dependency by tag beside the crates.io openmls 0.9 line): openmls_traits
+# from crates.io, the same package the consumer's openmls resolves to, not
+# the workspace path — the graph must hold the trait crate once.
+openmls_traits = { version = "0.6.0" }
 serde = { workspace = true, features = ["derive"] }
-rusqlite = { version = "0.37", features = ["bundled"] }
-refinery = { version = "0.9", features = ["rusqlite", "enums"] }
+# rusqlite and refinery from the SchwarzDigits forks that bundle SQLite3
+# Multiple Ciphers, by tag — the one rusqlite of the graph (a second
+# libsqlite3-sys would collide on `links = "sqlite3"`).
+rusqlite = { git = "https://github.com/SchwarzDigits/rusqlite", tag = "v0.37.0-sqlite3mc-2.5.1", version = "0.37", features = ["bundled"] }
+refinery = { git = "https://github.com/SchwarzDigits/refinery", tag = "v0.9.1-sqlite3mc", version = "0.9", features = ["rusqlite", "enums"] }
 
 [dev-dependencies]
 serde_json = { version = "1.0" }
