@@ -1,7 +1,8 @@
 # SchwarzDigits fork: openmls_sqlite_storage over the SchwarzDigits rusqlite
 
-This branch (`sqlite3mc/sqlite_storage-0.3`) is the `openmls_sqlite_storage`
-0.3.0 release with one change in its manifest: `rusqlite` and `refinery` come
+This branch (`schwarzdigits/openmls-0.9`) carries the SchwarzDigits changes
+on the openmls 0.9 release line. For this crate it is the
+`openmls_sqlite_storage` 0.3.0 release with one change in its manifest: `rusqlite` and `refinery` come
 from the SchwarzDigits forks that bundle SQLite3 Multiple Ciphers
 ([SchwarzDigits/rusqlite](https://github.com/SchwarzDigits/rusqlite),
 [SchwarzDigits/refinery](https://github.com/SchwarzDigits/refinery)), by tag,
@@ -10,7 +11,9 @@ consumer on the crates.io openmls 0.9 line holds the trait crate once. The
 code is upstream's. The branch is rebased on the openmls release tag that
 publishes the sqlite_storage line in use, and consumed as a git dependency
 by its tag. The fork's `main` tracks upstream; the other branches are
-upstream pull requests in flight.
+upstream pull requests in flight. (First published as
+`sqlite3mc/sqlite_storage-0.3`, tag `sqlite_storage-v0.3.0-sqlite3mc`,
+which stays for the consumers that pin it.)
 
 ---
 

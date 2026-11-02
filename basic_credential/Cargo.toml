@@ -11,16 +11,21 @@ repository = "https://github.com/openmls/openmls/tree/main/basic_credential"
 readme = "README.md"
 
 [dependencies]
-openmls_traits = { workspace = true }
+# SchwarzDigits fork (branch schwarzdigits/openmls-0.9, consumed as a git
+# dependency by tag beside the crates.io openmls 0.9 line): openmls_traits
+# from crates.io, the same package the consumer's openmls resolves to, not
+# the workspace path — the graph must hold the trait crate once.
+openmls_traits = { version = "0.6.0" }
 tls_codec = { workspace = true }
 serde = { workspace = true }
 
 # Rust Crypto
-ed25519-dalek = { version = "2.0", features = ["rand_core"] }
-p256 = { version = "0.13" }
-p384 = { version = "0.13" }
-ml-dsa = "0.1.0"
-rand_core = { version = "0.6", features = ["getrandom"] }
+ed25519-dalek = { version = "3.0", features = ["rand_core"] }
+p256 = { version = "0.14" }
+p384 = { version = "0.14" }
+ml-dsa = { version = "0.1.0", optional = true }
+rand_core = { version = "0.10" }
+getrandom = { version = "0.4", features = ["sys_rng"] }
 zeroize = "1.8.2"
 
 [features]
@@ -28,7 +33,12 @@ clonable = [] # Make the keys clonable
 test-utils = [] # Only use for tests!
 draft-ietf-mls-pq-ciphersuites = [
     "openmls_traits/draft-ietf-mls-pq-ciphersuites",
+    "dep:ml-dsa",
+    "openmls_rust_crypto/draft-ietf-mls-pq-ciphersuites",
+    "openmls_libcrux_crypto/draft-ietf-mls-pq-ciphersuites",
 ]
 
 [dev-dependencies]
 serde_json = "1.0.149"
+openmls_rust_crypto = { workspace = true }
+openmls_libcrux_crypto = { workspace = true }

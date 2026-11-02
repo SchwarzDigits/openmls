@@ -11,7 +11,7 @@ repository = "https://github.com/openmls/openmls/tree/main/sqlite_storage"
 readme = "README.md"
 
 [dependencies]
-# SchwarzDigits fork (branch sqlite3mc/sqlite_storage-0.3, consumed as a git
+# SchwarzDigits fork (branch schwarzdigits/openmls-0.9, consumed as a git
 # dependency by tag beside the crates.io openmls 0.9 line): openmls_traits
 # from crates.io, the same package the consumer's openmls resolves to, not
 # the workspace path — the graph must hold the trait crate once.
