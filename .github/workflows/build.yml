@@ -9,6 +9,7 @@ on:
     branches:
       - main
       - v0.9
+      - schwarzdigits/openmls-0.9
   pull_request:
   workflow_dispatch:
 
