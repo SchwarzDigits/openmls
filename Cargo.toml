@@ -40,3 +40,14 @@ openmls_libcrux_crypto = { version = "0.4.0", path = "libcrux_crypto" }
 openmls_memory_storage = { version = "0.6.0", path = "memory_storage" }
 openmls_serialization_helpers = { version = "0.1.0", path = "serialization_helpers" }
 openmls_sqlite_storage = { version = "0.3.0", path = "sqlite_storage" }
+
+# The fork crates (`openmls_rust_crypto`, `openmls_basic_credential`,
+# `openmls_sqlite_storage`) take `openmls_traits` and `openmls_memory_storage`
+# from crates.io, so a consumer on the crates.io openmls 0.9 line holds the
+# trait crate once. Inside this workspace the two crates.io crates resolve to
+# their paths here (same 0.6.0 code), so `openmls` and `openmls_test` see one
+# `openmls_traits`. Cargo applies `[patch]` only from the root manifest of the
+# build, so git consumers of this branch are not affected.
+[patch.crates-io]
+openmls_traits = { path = "traits" }
+openmls_memory_storage = { path = "memory_storage" }
