@@ -2772,7 +2772,7 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 [[package]]
 name = "libsqlite3-sys"
 version = "0.35.0"
-source = "git+https://github.com/SchwarzDigits/rusqlite?tag=v0.37.0-sqlite3mc-2.5.1#0a490c3f1622b63cb2057d447887a57482c9f3f2"
+source = "git+https://github.com/SchwarzDigits/rusqlite?tag=v0.37.0-sqlite3mc-2.7.1#fdfc1d8ab02486c0127f929a79cf04ab1b53afba"
 dependencies = [
  "cc",
  "pkg-config",
@@ -3850,7 +3850,7 @@ checksum = "20145670ba436b55d91fc92d25e71160fbfbdd57831631c8d7d36377a476f1cb"
 [[package]]
 name = "refinery"
 version = "0.9.1"
-source = "git+https://github.com/SchwarzDigits/refinery?tag=v0.9.1-sqlite3mc#538b722ea1115f66fc0187fd0bb28493f38034c1"
+source = "git+https://github.com/SchwarzDigits/refinery?tag=v0.9.1-sqlite3mc-2.7.1#47b0abd6380d2806e4f3e40404be0e7ab58c4996"
 dependencies = [
  "refinery-core",
  "refinery-macros",
@@ -3859,7 +3859,7 @@ dependencies = [
 [[package]]
 name = "refinery-core"
 version = "0.9.1"
-source = "git+https://github.com/SchwarzDigits/refinery?tag=v0.9.1-sqlite3mc#538b722ea1115f66fc0187fd0bb28493f38034c1"
+source = "git+https://github.com/SchwarzDigits/refinery?tag=v0.9.1-sqlite3mc-2.7.1#47b0abd6380d2806e4f3e40404be0e7ab58c4996"
 dependencies = [
  "async-trait",
  "cfg-if",
@@ -3878,7 +3878,7 @@ dependencies = [
 [[package]]
 name = "refinery-macros"
 version = "0.9.1"
-source = "git+https://github.com/SchwarzDigits/refinery?tag=v0.9.1-sqlite3mc#538b722ea1115f66fc0187fd0bb28493f38034c1"
+source = "git+https://github.com/SchwarzDigits/refinery?tag=v0.9.1-sqlite3mc-2.7.1#47b0abd6380d2806e4f3e40404be0e7ab58c4996"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -3995,7 +3995,7 @@ dependencies = [
 [[package]]
 name = "rusqlite"
 version = "0.37.0"
-source = "git+https://github.com/SchwarzDigits/rusqlite?tag=v0.37.0-sqlite3mc-2.5.1#0a490c3f1622b63cb2057d447887a57482c9f3f2"
+source = "git+https://github.com/SchwarzDigits/rusqlite?tag=v0.37.0-sqlite3mc-2.7.1#fdfc1d8ab02486c0127f929a79cf04ab1b53afba"
 dependencies = [
  "bitflags",
  "fallible-iterator",
@@ -4452,9 +4452,9 @@ checksum = "3a0219bd7d979d58245a4f41f695e1ac9f8befdffadd7f61f1bae9e39abc6620"
 
 [[package]]
 name = "sqlite-wasm-rs"
-version = "0.6.2"
+version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "36bd8e29bf08189a005b2df1df99823aa0861cabe9044e5f31ed54ca292ee618"
+checksum = "a6cd504cecbfe7eef649988840f9a6cb768d11085efec138f8e99f160632d867"
 dependencies = [
  "cc",
  "js-sys",
@@ -4465,9 +4465,9 @@ dependencies = [
 
 [[package]]
 name = "sqlite3mc-src"
-version = "205.1.0+sqlite3mc-2.5.1-sqlite-3.53.4"
+version = "206.1.0+sqlite3mc-2.6.1-sqlite-3.54.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f155b7d3de6d72fb7b7c7affcba3773634c1fb2978b944b425c3d3ed5474448c"
+checksum = "f4b3912efb0d47fcf6e2c71eca58a9b1a4432c424ff9194a87140ec229ac87bf"
 
 [[package]]
 name = "stable_deref_trait"
